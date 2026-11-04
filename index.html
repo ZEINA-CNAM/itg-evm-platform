@@ -1,0 +1,898 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ITG Holding — Enterprise Project Management & EVM Decision System</title>
+    <!-- Google Fonts & Icons -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="/static/css/style.css?v=2.7">
+</head>
+<body>
+    <!-- Top Navigation Bar -->
+    <header class="top-nav">
+        <div class="nav-brand">
+            <div class="brand-logo">
+                <i class="fa-solid fa-layer-group"></i>
+            </div>
+            <div class="brand-text">
+                <span class="brand-title">ITG HOLDING</span>
+                <span class="brand-subtitle">Project Management & EVM Decision System</span>
+            </div>
+        </div>
+
+        <nav class="nav-tabs" id="navTabs">
+            <button class="nav-tab active" data-tab="portfolio"><i class="fa-solid fa-chart-pie"></i> 1. Portfolio</button>
+            <button class="nav-tab" data-tab="risks"><i class="fa-solid fa-shield-halved"></i> 2. Risks & Governance</button>
+            <button class="nav-tab" data-tab="tasks"><i class="fa-solid fa-list-check"></i> 3. Tasks</button>
+            <button class="nav-tab" data-tab="financials"><i class="fa-solid fa-file-invoice-dollar"></i> 4. Financials</button>
+            <button class="nav-tab" data-tab="scurve"><i class="fa-solid fa-chart-line"></i> 5. Budget (S-Curve)</button>
+            <button class="nav-tab" data-tab="timeline"><i class="fa-solid fa-calendar-days"></i> 6. Timeline</button>
+        </nav>
+
+        <div class="nav-actions">
+            <button class="btn btn-outline" id="btnSeedDemo" title="Load sample portfolio for demonstration"><i class="fa-solid fa-wand-magic-sparkles"></i> Load Sample Data</button>
+            <button class="btn btn-outline" id="btnResetData" title="Reset to 100% clean Zero-Data state"><i class="fa-solid fa-rotate-left"></i> Reset Clean</button>
+            <button class="btn btn-secondary" id="btnOpenCutoffModal"><i class="fa-solid fa-calendar-check"></i> + Cut-Off Report</button>
+            <button class="btn btn-primary" id="btnOpenProjectModal"><i class="fa-solid fa-plus"></i> + Register Project</button>
+        </div>
+    </header>
+
+    <!-- Global Persistent Filters Bar (Tier 1) -->
+    <section class="global-filter-bar">
+        <div class="filter-group">
+            <label for="subsidiaryFilter"><i class="fa-solid fa-building"></i> Subsidiary:</label>
+            <select id="subsidiaryFilter" class="filter-select">
+                <option value="0">All ITG Holding (18 Affiliates)</option>
+            </select>
+        </div>
+
+        <div class="filter-group">
+            <label for="ragFilter"><i class="fa-solid fa-traffic-light"></i> Health (RAG):</label>
+            <div class="rag-slicer" id="ragSlicer">
+                <button class="rag-btn active" data-rag="All">All</button>
+                <button class="rag-btn rag-green" data-rag="GREEN"><i class="fa-solid fa-circle-check"></i> Healthy</button>
+                <button class="rag-btn rag-amber" data-rag="AMBER"><i class="fa-solid fa-triangle-exclamation"></i> At Risk</button>
+                <button class="rag-btn rag-red" data-rag="RED"><i class="fa-solid fa-circle-xmark"></i> Critical</button>
+            </div>
+        </div>
+
+        <div class="filter-group">
+            <label for="statusFilter"><i class="fa-solid fa-signal"></i> Project Status:</label>
+            <select id="statusFilter" class="filter-select">
+                <option value="All">All Statuses</option>
+                <option value="Active">Active</option>
+                <option value="Not Started">Not Started</option>
+                <option value="On Hold">On Hold</option>
+                <option value="Closed">Closed</option>
+            </select>
+        </div>
+
+        <div class="filter-group ml-auto">
+            <span class="badge badge-clean" id="tenantBadge"><i class="fa-solid fa-shield-halved"></i> Multi-Tenant RBAC Active</span>
+        </div>
+    </section>
+
+    <!-- Main Application Container -->
+    <main class="main-content">
+
+        <!-- ================================================================= -->
+        <!-- TAB 1: PORTFOLIO OVERVIEW DASHBOARD (CEO / GM LEVEL)             -->
+        <!-- ================================================================= -->
+        <section class="tab-pane active" id="tab-portfolio">
+            <div class="section-header">
+                <div>
+                    <h2>Group Portfolio Overview</h2>
+                    <p class="section-desc">Consolidated leadership cockpit monitoring project health, budget consumption, and performance indices across all 15 subsidiaries.</p>
+                </div>
+                <div class="header-badges">
+                    <span class="kpi-pill"><i class="fa-solid fa-bullseye"></i> Target CPI: &ge; 0.95</span>
+                    <span class="kpi-pill"><i class="fa-solid fa-clock"></i> Target SPI: &ge; 0.95</span>
+                </div>
+            </div>
+
+            <!-- 4 Top Executive Stat Cards -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-header">
+                        <span class="stat-label">Active Portfolios</span>
+                        <div class="stat-icon icon-blue"><i class="fa-solid fa-folder-open"></i></div>
+                    </div>
+                    <div class="stat-value" id="kpiTotalProjects">0</div>
+                    <div class="stat-footer" id="kpiPipelineCount">0 pipeline initiatives</div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-header">
+                        <span class="stat-label">Consolidated BAC</span>
+                        <div class="stat-icon icon-emerald"><i class="fa-solid fa-vault"></i></div>
+                    </div>
+                    <div class="stat-value" id="kpiGroupBAC">$0.00</div>
+                    <div class="stat-footer" id="kpiBACDetail">Approved Baseline Budget</div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-header">
+                        <span class="stat-label">Budget Consumed %</span>
+                        <div class="stat-icon icon-amber"><i class="fa-solid fa-fire-flame-curved"></i></div>
+                    </div>
+                    <div class="stat-value" id="kpiBurnRate">0.0%</div>
+                    <div class="stat-footer" id="kpiActualCost">$0.00 actual cost incurred</div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-header">
+                        <span class="stat-label">Group CPI / SPI</span>
+                        <div class="stat-icon icon-purple"><i class="fa-solid fa-gauge-high"></i></div>
+                    </div>
+                    <div class="stat-value" id="kpiIndices">1.00 / 1.00</div>
+                    <div class="stat-footer" id="kpiOverrunExposure">Overrun Exposure: $0.00</div>
+                </div>
+            </div>
+
+            <!-- Health Distribution & 30-Day Critical Milestones -->
+            <div class="dashboard-grid-2">
+                <div class="card">
+                    <div class="card-header">
+                        <h3><i class="fa-solid fa-chart-column"></i> Subsidiary Portfolio Health Distribution</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="chart-container" style="height: 240px;">
+                            <canvas id="subsidiaryHealthChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h3><i class="fa-solid fa-triangle-exclamation"></i> Critical 30-Day Executive Alerts</h3>
+                        <span class="badge badge-amber" id="alertCountBadge">0 Alerts</span>
+                    </div>
+                    <div class="card-body" id="executiveAlertsList">
+                        <div class="empty-state">
+                            <i class="fa-solid fa-circle-check text-green"></i>
+                            <p>No critical slippages or cost overruns detected across active portfolios.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Master Projects Table -->
+            <div class="card mt-4">
+                <div class="card-header">
+                    <h3><i class="fa-solid fa-table-list"></i> Master Project Registry</h3>
+                    <div class="card-actions">
+                        <input type="text" id="projectSearchInput" class="search-input" placeholder="Search project, PM, or client...">
+                    </div>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="data-table" id="projectsTable">
+                            <thead>
+                                <tr>
+                                    <th>Status</th>
+                                    <th>Project Code & Name</th>
+                                    <th>Subsidiary</th>
+                                    <th>Project Manager</th>
+                                    <th>Contract Model</th>
+                                    <th>BAC ($)</th>
+                                    <th>Actual Spend ($)</th>
+                                    <th>Progress %</th>
+                                    <th>CPI</th>
+                                    <th>SPI</th>
+                                    <th>Forecast Finish</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="projectsTableBody">
+                                <!-- Populated dynamically -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ================================================================= -->
+        <!-- TAB 2: RISKS & GOVERNANCE REGISTER (FORM 4 EVM STANDARD)         -->
+        <!-- ================================================================= -->
+        <section class="tab-pane" id="tab-risks">
+            <div class="section-header">
+                <div>
+                    <h2>Risk & Governance Register</h2>
+                    <p class="section-desc">Portfolio-wide operational risk exposure, interactive 5&times;5 Probability-Impact matrix, and Scope Change Request (CR) governance log.</p>
+                </div>
+                <div class="header-badges">
+                    <span class="kpi-pill"><i class="fa-solid fa-calculator"></i> Exposure = (P / 5) &times; Impact</span>
+                    <span class="kpi-pill"><i class="fa-solid fa-shield-halved"></i> Form 4 Governance Active</span>
+                </div>
+            </div>
+
+            <!-- 4 Top Executive Stat Cards -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-header"><span class="stat-label">Total Open Risks</span><i class="fa-solid fa-triangle-exclamation text-amber"></i></div>
+                    <div class="stat-value" id="riskTotalOpen">0</div>
+                    <div class="stat-footer" id="riskOpenBreakdown">Across registered projects</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-header"><span class="stat-label">Critical & High Risks</span><i class="fa-solid fa-radiation text-red"></i></div>
+                    <div class="stat-value" id="riskCriticalCount">0</div>
+                    <div class="stat-footer" id="riskCriticalFooter">Immediate mitigation priority</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-header"><span class="stat-label">Total Financial Exposure</span><i class="fa-solid fa-money-bill-wave text-blue"></i></div>
+                    <div class="stat-value" id="riskTotalExposure">$0.00</div>
+                    <div class="stat-footer">&sum; (P / 5) &times; Impact Cost</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-header"><span class="stat-label">Pending Change Requests</span><i class="fa-solid fa-code-pull-request text-purple"></i></div>
+                    <div class="stat-value" id="riskPendingCRs">0</div>
+                    <div class="stat-footer" id="riskPendingCRCost">$0.00 estimated scope impact</div>
+                </div>
+            </div>
+
+            <!-- 5x5 Interactive Risk Matrix Grid -->
+            <div class="card mt-4">
+                <div class="card-header d-flex justify-between align-center">
+                    <h3><i class="fa-solid fa-table-cells-large"></i> 5&times;5 Probability vs. Financial Impact Matrix</h3>
+                    <div class="matrix-filter-reset">
+                        <span id="matrixActiveFilterLabel" class="badge badge-clean">Filter: All Cells</span>
+                        <button class="btn btn-sm btn-outline" id="btnResetMatrixFilter" style="display:none;" onclick="resetMatrixFilter()"><i class="fa-solid fa-rotate-left"></i> Clear Matrix Filter</button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="risk-matrix-layout">
+                        <!-- Matrix Grid Column -->
+                        <div class="matrix-container-wrapper">
+                            <div class="matrix-y-axis-label">
+                                <span><i class="fa-solid fa-arrow-up"></i> PROBABILITY (1 = Very Low &rarr; 5 = Very High)</span>
+                            </div>
+                            <div class="matrix-table-container">
+                                <table class="risk-matrix-grid">
+                                    <thead>
+                                        <tr>
+                                            <th class="matrix-corner-th">P \ I</th>
+                                            <th>1: &lt;$15k<br><span class="text-sub">Negligible</span></th>
+                                            <th>2: $15k-$30k<br><span class="text-sub">Minor</span></th>
+                                            <th>3: $30k-$50k<br><span class="text-sub">Moderate</span></th>
+                                            <th>4: $50k-$80k<br><span class="text-sub">Major</span></th>
+                                            <th>5: &gt;$80k<br><span class="text-sub">Critical</span></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="riskMatrixBody">
+                                        <!-- Dynamically populated 5x5 matrix cells -->
+                                    </tbody>
+                                </table>
+                                <div class="matrix-x-axis-label">
+                                    <span>IMPACT COST ($) (1 = Negligible &rarr; 5 = Critical) <i class="fa-solid fa-arrow-right"></i></span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Matrix Side Summary & Legend -->
+                        <div class="matrix-sidebar">
+                            <h4 class="sidebar-title"><i class="fa-solid fa-circle-info"></i> Severity Classification</h4>
+                            <div class="legend-list">
+                                <div class="legend-item" onclick="filterBySeverity('Critical')">
+                                    <div class="legend-chip-wrap">
+                                        <span class="legend-chip matrix-red"></span>
+                                        <span class="legend-name">Critical (Score 17&ndash;25)</span>
+                                    </div>
+                                    <span class="badge badge-red" id="badgeCountCritical">0</span>
+                                </div>
+                                <div class="legend-item" onclick="filterBySeverity('High')">
+                                    <div class="legend-chip-wrap">
+                                        <span class="legend-chip matrix-orange"></span>
+                                        <span class="legend-name">High (Score 13&ndash;16)</span>
+                                    </div>
+                                    <span class="badge badge-amber" id="badgeCountHigh">0</span>
+                                </div>
+                                <div class="legend-item" onclick="filterBySeverity('Medium')">
+                                    <div class="legend-chip-wrap">
+                                        <span class="legend-chip matrix-amber"></span>
+                                        <span class="legend-name">Medium (Score 7&ndash;12)</span>
+                                    </div>
+                                    <span class="badge badge-amber" id="badgeCountMedium">0</span>
+                                </div>
+                                <div class="legend-item" onclick="filterBySeverity('Low')">
+                                    <div class="legend-chip-wrap">
+                                        <span class="legend-chip matrix-green"></span>
+                                        <span class="legend-name">Low (Score 1&ndash;6)</span>
+                                    </div>
+                                    <span class="badge badge-green" id="badgeCountLow">0</span>
+                                </div>
+                            </div>
+
+                            <!-- Exposure vs. Contingency Reserve Card -->
+                            <div class="contingency-coverage-box mt-3">
+                                <div class="d-flex justify-between align-center mb-1">
+                                    <span class="sidebar-subhead" style="font-size:0.75rem; font-weight:700; color:var(--navy-blue);"><i class="fa-solid fa-vault"></i> Contingency Reserve</span>
+                                    <span class="badge badge-clean" id="matrixContingencyStatus" style="font-size:0.68rem;">Healthy</span>
+                                </div>
+                                <div class="d-flex justify-between text-muted" style="font-size:0.72rem; margin-bottom: 0.35rem;">
+                                    <span>Total Exposure: <strong id="matrixExposureVal" style="color:var(--text-primary);">$0.00</strong></span>
+                                    <span>Reserve: <strong id="matrixContingencyVal" style="color:var(--text-primary);">$0.00</strong></span>
+                                </div>
+                                <div class="progress-bar-wrap" style="height: 6px; background: #E2E8F0; border-radius: 3px; overflow: hidden;">
+                                    <div id="matrixCoverageBar" style="height: 100%; width: 0%; background: #10B981; transition: width 0.3s ease;"></div>
+                                </div>
+                            </div>
+                            
+                            <div class="matrix-guide-box mt-3">
+                                <p><i class="fa-solid fa-hand-pointer text-blue"></i> <strong>Interactive:</strong> Click any cell in the 5&times;5 grid or a severity tier above to filter the risk table.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Risk Register Table (Form 4 - Risk Log) -->
+            <div class="card mt-4">
+                <div class="card-header d-flex justify-between align-center">
+                    <h3><i class="fa-solid fa-list-check"></i> Project Risk Register (Form 4 Log)</h3>
+                    <div class="table-search-box">
+                        <input type="text" id="riskSearchInput" placeholder="Filter by risk code, title, owner..." class="form-input" style="padding: 0.35rem 0.75rem; font-size: 0.8rem; width: 260px;" oninput="filterRisksTable()">
+                    </div>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="data-table" id="risksTable">
+                            <thead>
+                                <tr>
+                                    <th>Risk ID</th>
+                                    <th>Project</th>
+                                    <th>Affiliate</th>
+                                    <th>Risk Description</th>
+                                    <th>Probability (P)</th>
+                                    <th>Impact ($)</th>
+                                    <th>Exposure ($)</th>
+                                    <th>Severity</th>
+                                    <th>Owner</th>
+                                    <th>Status</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="risksTableBody">
+                                <!-- Populated dynamically -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Scope Change Requests (CR) Approval Log (Form 4 - Governance) -->
+            <div class="card mt-4">
+                <div class="card-header d-flex justify-between align-center">
+                    <div>
+                        <h3><i class="fa-solid fa-code-pull-request"></i> Scope Change Requests (CR) Approval Log</h3>
+                        <p class="section-desc" style="margin:0; font-size:0.75rem;">Holding PMO governance approval workflow for scope, budget & schedule variations.</p>
+                    </div>
+                    <span class="badge badge-clean"><i class="fa-solid fa-gavel"></i> Baseline Change Control</span>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="data-table" id="changeRequestsTable">
+                            <thead>
+                                <tr>
+                                    <th>CR Code</th>
+                                    <th>Project</th>
+                                    <th>Affiliate</th>
+                                    <th>Scope Change Description</th>
+                                    <th>Cost Impact ($)</th>
+                                    <th>Schedule Impact</th>
+                                    <th>Requested By</th>
+                                    <th>Status</th>
+                                    <th>Approval Decision</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="changeRequestsTableBody">
+                                <!-- Populated dynamically -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+
+        <!-- ================================================================= -->
+        <!-- TAB 3: TASK-CENTRIC EXECUTION KANBAN (TEAMS & DELIVERY)          -->
+        <!-- ================================================================= -->
+        <section class="tab-pane" id="tab-tasks">
+            <div class="section-header">
+                <div>
+                    <h2>Task-Centric Execution & Delivery</h2>
+                    <p class="section-desc">Interactive WBS execution Kanban board tracking deliverable progress, blockers, defect density, and rework friction.</p>
+                </div>
+            </div>
+
+            <div class="kanban-board">
+                <div class="kanban-column" data-status="Backlog">
+                    <div class="kanban-header">
+                        <span><i class="fa-solid fa-layer-group"></i> Backlog</span>
+                        <span class="count-badge" id="count-Backlog">0</span>
+                    </div>
+                    <div class="kanban-cards" id="kanban-Backlog"></div>
+                </div>
+
+                <div class="kanban-column" data-status="In Progress">
+                    <div class="kanban-header">
+                        <span><i class="fa-solid fa-spinner"></i> In Progress</span>
+                        <span class="count-badge" id="count-In Progress">0</span>
+                    </div>
+                    <div class="kanban-cards" id="kanban-In Progress"></div>
+                </div>
+
+                <div class="kanban-column" data-status="In Review">
+                    <div class="kanban-header">
+                        <span><i class="fa-solid fa-glasses"></i> In Review / QA</span>
+                        <span class="count-badge" id="count-In Review">0</span>
+                    </div>
+                    <div class="kanban-cards" id="kanban-In Review"></div>
+                </div>
+
+                <div class="kanban-column" data-status="Blocked">
+                    <div class="kanban-header text-red">
+                        <span><i class="fa-solid fa-hand text-red"></i> Blocked</span>
+                        <span class="count-badge badge-red" id="count-Blocked">0</span>
+                    </div>
+                    <div class="kanban-cards" id="kanban-Blocked"></div>
+                </div>
+
+                <div class="kanban-column" data-status="Completed">
+                    <div class="kanban-header text-green">
+                        <span><i class="fa-solid fa-check-circle text-green"></i> Completed</span>
+                        <span class="count-badge badge-green" id="count-Completed">0</span>
+                    </div>
+                    <div class="kanban-cards" id="kanban-Completed"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ================================================================= -->
+        <!-- TAB 4: FINANCIAL PROJECT DASHBOARD (CEO & CFO)                   -->
+        <!-- ================================================================= -->
+        <section class="tab-pane" id="tab-financials">
+            <div class="section-header">
+                <div>
+                    <h2>Financial Project & Profitability Dashboard</h2>
+                    <p class="section-desc">Executive commercial governance tracking earned value, cost indices, and contract margins across Fixed-Price and T&M portfolios.</p>
+                </div>
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-header"><span class="stat-label">Total Contract Value</span><i class="fa-solid fa-file-contract text-blue"></i></div>
+                    <div class="stat-value" id="finTotalContract">$0.00</div>
+                    <div class="stat-footer">Gross contractual commitments</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-header"><span class="stat-label">Earned Value (EV)</span><i class="fa-solid fa-trophy text-emerald"></i></div>
+                    <div class="stat-value" id="finTotalEV">$0.00</div>
+                    <div class="stat-footer">Physical value of work delivered</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-header"><span class="stat-label">Actual Cost (AC)</span><i class="fa-solid fa-money-bill-transfer text-amber"></i></div>
+                    <div class="stat-value" id="finTotalAC">$0.00</div>
+                    <div class="stat-footer">Actual expenditures to date</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-header"><span class="stat-label">Projected Net VAC</span><i class="fa-solid fa-scale-balanced text-purple"></i></div>
+                    <div class="stat-value" id="finNetVAC">$0.00</div>
+                    <div class="stat-footer" id="finVACSubtitle">BAC - EAC across active scope</div>
+                </div>
+            </div>
+
+            <div class="dashboard-grid-2 mt-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h3><i class="fa-solid fa-chart-pie"></i> Profitability by Contract Model</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="chart-container" style="height: 250px;">
+                            <canvas id="contractModelChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h3><i class="fa-solid fa-table"></i> Fixed-Price Contract Margin Performance</h3>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="data-table" id="finFixedPriceTable">
+                                <thead>
+                                    <tr>
+                                        <th>Project</th>
+                                        <th>Contract ($)</th>
+                                        <th>BAC ($)</th>
+                                        <th>AC ($)</th>
+                                        <th>EV ($)</th>
+                                        <th>CPI</th>
+                                        <th>Margin Health</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="finFixedPriceTableBody">
+                                    <!-- Populated dynamically -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ================================================================= -->
+        <!-- TAB 5: BUDGET VS. ACTUAL & S-CURVE (CONTROLLER VIEW)             -->
+        <!-- ================================================================= -->
+        <section class="tab-pane" id="tab-scurve">
+            <div class="section-header">
+                <div>
+                    <h2>Budget vs. Actual (Cumulative S-Curve)</h2>
+                    <p class="section-desc">Deterministic EVM trend analysis tracking cumulative Planned Value (PV), Earned Value (EV), and Actual Cost (AC) over time.</p>
+                </div>
+                <div class="filter-group">
+                    <label for="scurveProjectSelector">Select Project Scope:</label>
+                    <select id="scurveProjectSelector" class="filter-select">
+                        <option value="0">Consolidated ITG Portfolio S-Curve</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <h3 id="scurveChartTitle"><i class="fa-solid fa-chart-line"></i> Cumulative Performance S-Curve (PV vs. EV vs. AC)</h3>
+                    <div class="s-curve-legend">
+                        <span class="legend-item"><span class="dot dot-blue"></span> PV (Planned)</span>
+                        <span class="legend-item"><span class="dot dot-emerald"></span> EV (Earned)</span>
+                        <span class="legend-item"><span class="dot dot-amber"></span> AC (Actual)</span>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div id="scurveEmptyState" class="empty-state" style="display:none; padding: 3.5rem 1rem;">
+                        <i class="fa-solid fa-chart-line" style="font-size:2.2rem; color:var(--text-muted); margin-bottom:0.75rem; display:block;"></i>
+                        <h4 style="color:var(--text-primary); margin-bottom:0.35rem; font-size:1rem;">No Cut-Off Performance Data Recorded</h4>
+                        <p style="font-size:0.82rem; color:var(--text-muted); max-width:480px; margin:0 auto; line-height:1.5;">
+                            Zero periodic snapshots have been submitted. Register projects and file monthly cut-off reports (PV / EV / AC) to generate cumulative S-Curves, or click <strong>"Load Sample Data"</strong> above to explore demonstration curves.
+                        </p>
+                    </div>
+                    <div class="chart-container" id="scurveChartContainer" style="height: 320px;">
+                        <canvas id="scurveChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ================================================================= -->
+        <!-- TAB 6: PROJECT TIMELINE & MILESTONES (STEERING COMMITTEE)        -->
+        <!-- ================================================================= -->
+        <section class="tab-pane" id="tab-timeline">
+            <div class="section-header">
+                <div>
+                    <h2>Project Timeline & Milestones Roadmap</h2>
+                    <p class="section-desc">Chronological deliverable roadmap, critical path dependency tracking, and automated milestone slippage containment.</p>
+                </div>
+            </div>
+
+            <!-- Slippage Alert Banner -->
+            <div class="alert-banner" id="slippageBanner" style="display: none;">
+                <div class="alert-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                <div class="alert-content">
+                    <h4 id="slippageTitle">Milestone Slippage Red-Flag Alert (>30 Days Delayed)</h4>
+                    <p id="slippageDesc">The following critical milestones require immediate steering committee intervention.</p>
+                </div>
+            </div>
+
+            <div class="card mt-4">
+                <div class="card-header">
+                    <h3><i class="fa-solid fa-timeline"></i> Critical Path Milestone Deliverables</h3>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="data-table" id="timelineMilestonesTable">
+                            <thead>
+                                <tr>
+                                    <th>Project</th>
+                                    <th>Milestone / Work Package</th>
+                                    <th>Weight %</th>
+                                    <th>Planned Start</th>
+                                    <th>Planned Finish</th>
+                                    <th>Status</th>
+                                    <th>Critical Path</th>
+                                </tr>
+                            </thead>
+                            <tbody id="timelineMilestonesBody">
+                                <!-- Populated dynamically -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- ===================================================================== -->
+    <!-- MODAL 1: REGISTER NEW PROJECT (FORM 1 & FORM 2)                       -->
+    <!-- ===================================================================== -->
+    <div class="modal-overlay" id="modalProject">
+        <div class="modal-card modal-lg">
+            <div class="modal-header">
+                <h3><i class="fa-solid fa-folder-plus"></i> Form 1 & 2: Register New Project & WBS Baseline</h3>
+                <button class="modal-close" id="btnCloseProjectModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="formRegisterProject">
+                    <div class="form-grid-3">
+                        <div class="form-group">
+                            <label>Subsidiary *</label>
+                            <select id="p_subsidiary" class="form-control" required></select>
+                        </div>
+                        <div class="form-group">
+                            <label>Project Code *</label>
+                            <input type="text" id="p_code" class="form-control" placeholder="e.g. PRJ-SOFT-10" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Project Name *</label>
+                            <input type="text" id="p_name" class="form-control" placeholder="e.g. Enterprise Cloud ERP" required>
+                        </div>
+                    </div>
+
+                    <div class="form-grid-3">
+                        <div class="form-group">
+                            <label>Client Name *</label>
+                            <input type="text" id="p_client" class="form-control" placeholder="e.g. Arab Bank Group" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Project Manager *</label>
+                            <input type="text" id="p_pm" class="form-control" placeholder="e.g. Jad Khoury" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Executive Sponsor *</label>
+                            <input type="text" id="p_sponsor" class="form-control" placeholder="e.g. VP Operations" required>
+                        </div>
+                    </div>
+
+                    <div class="form-grid-4">
+                        <div class="form-group">
+                            <label>Project Type *</label>
+                            <select id="p_type" class="form-control">
+                                <option value="Fixed Price">Fixed Price</option>
+                                <option value="T&M">T&M</option>
+                                <option value="Internal">Internal</option>
+                                <option value="Other">Other</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Project Status *</label>
+                            <select id="p_status" class="form-control">
+                                <option value="Active">Active</option>
+                                <option value="Not Started">Not Started</option>
+                                <option value="On Hold">On Hold</option>
+                                <option value="Closed">Closed</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Baseline Start Date *</label>
+                            <input type="date" id="p_start" class="form-control" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Baseline End Date *</label>
+                            <input type="date" id="p_end" class="form-control" required>
+                        </div>
+                    </div>
+
+                    <div class="form-grid-4">
+                        <div class="form-group">
+                            <label>Budget at Completion (BAC $) *</label>
+                            <input type="number" id="p_bac" class="form-control" placeholder="e.g. 250000" step="1000" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Contract Value ($) *</label>
+                            <input type="number" id="p_contract" class="form-control" placeholder="e.g. 320000" step="1000" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Contingency Reserve ($)</label>
+                            <input type="number" id="p_contingency" class="form-control" placeholder="e.g. 25000">
+                        </div>
+                        <div class="form-group">
+                            <label>Planned FTE Allocation</label>
+                            <input type="number" id="p_fte" class="form-control" placeholder="e.g. 2.0" step="0.1">
+                        </div>
+                    </div>
+
+                    <hr class="form-divider">
+                    <div class="section-title-row">
+                        <h4><i class="fa-solid fa-list-check"></i> Form 2: WBS Deliverables & Milestones</h4>
+                        <button type="button" class="btn btn-sm btn-outline" id="btnAddWbsRow">+ Add WBS Row</button>
+                    </div>
+
+                    <div class="table-responsive">
+                        <table class="data-table" id="tableWbsInput">
+                            <thead>
+                                <tr>
+                                    <th>Item Name</th>
+                                    <th>Type</th>
+                                    <th>Weight %</th>
+                                    <th>Planned Start</th>
+                                    <th>Planned Finish</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="wbsRowsBody">
+                                <!-- Dynamic rows -->
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-outline" id="btnCancelProject">Cancel</button>
+                        <button type="submit" class="btn btn-primary"><i class="fa-solid fa-check"></i> Save & Lock Baseline</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===================================================================== -->
+    <!-- MODAL 2: SUBMIT PERIODIC STATUS CUT-OFF (FORM 3)                      -->
+    <!-- ===================================================================== -->
+    <!-- ===================================================================== -->
+    <!-- MODAL 2: SUBMIT PERIODIC STATUS CUT-OFF (FORM 3)                      -->
+    <!-- ===================================================================== -->
+    <div class="modal-overlay" id="modalCutoff">
+        <div class="modal-card modal-lg">
+            <div class="modal-header">
+                <h3><i class="fa-solid fa-calendar-check"></i> Form 3: Submit Periodic Project Status & Cut-Off Actuals</h3>
+                <button class="modal-close" id="btnCloseCutoffModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="formCutoff">
+                    <!-- Section 1: Reporting Context -->
+                    <div class="section-title-row">
+                        <h4><i class="fa-solid fa-clock-rotate-left"></i> 1. Reporting Context & Cadence</h4>
+                        <span class="badge badge-clean">Cadence Cut-Off</span>
+                    </div>
+                    <div class="form-grid-3">
+                        <div class="form-group">
+                            <label>Select Project *</label>
+                            <select id="c_project_id" class="form-control" required></select>
+                        </div>
+                        <div class="form-group">
+                            <label>Cut-Off Snapshot Date *</label>
+                            <input type="date" id="c_date" class="form-control" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Forecast Finish Date</label>
+                            <input type="date" id="c_forecast_date" class="form-control">
+                        </div>
+                    </div>
+
+                    <hr class="form-divider">
+
+                    <!-- Section 2: Core Earned Value Metrics (EVM Standard) -->
+                    <div class="section-title-row">
+                        <h4><i class="fa-solid fa-calculator"></i> 2. Cumulative Earned Value Metrics (Standard EVM Inputs)</h4>
+                        <span class="badge badge-clean">Cumulative $ Through Cut-Off</span>
+                    </div>
+                    <div class="form-grid-4">
+                        <div class="form-group">
+                            <label>Planned Value (PV $) *</label>
+                            <input type="number" id="c_pv" class="form-control" step="100" placeholder="e.g. 140000" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Earned Value (EV $) *</label>
+                            <input type="number" id="c_ev" class="form-control" step="100" placeholder="e.g. 142000" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Actual Cost (AC $) *</label>
+                            <input type="number" id="c_ac" class="form-control" step="100" placeholder="e.g. 135000" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Physical Progress %</label>
+                            <input type="number" id="c_progress_pct" class="form-control" min="0" max="100" step="0.1" placeholder="e.g. 35.5">
+                        </div>
+                    </div>
+
+                    <hr class="form-divider">
+
+                    <!-- Section 3: Operational Effort & Engineering Capacity -->
+                    <div class="section-title-row">
+                        <h4><i class="fa-solid fa-users-gear"></i> 3. Operational Effort & Capacity Utilization</h4>
+                        <span class="badge badge-clean">Engineering Hours</span>
+                    </div>
+                    <div class="form-grid-3">
+                        <div class="form-group">
+                            <label>Actual Effort Incurred (Hours)</label>
+                            <input type="number" id="c_effort" class="form-control" value="160" min="0" step="1">
+                        </div>
+                        <div class="form-group">
+                            <label>Available Resource Hours</label>
+                            <input type="number" id="c_available_hours" class="form-control" value="160" min="0" step="1">
+                        </div>
+                        <div class="form-group">
+                            <label>Rework Friction Effort (Hours)</label>
+                            <input type="number" id="c_rework" class="form-control" value="0" min="0" step="1">
+                        </div>
+                    </div>
+
+                    <hr class="form-divider">
+
+                    <!-- Section 4: Quality & Deliverable Governance -->
+                    <div class="section-title-row">
+                        <h4><i class="fa-solid fa-clipboard-check"></i> 4. Scope Deliverables & Quality Gates</h4>
+                        <span class="badge badge-clean">Form 3 Quality Metrics</span>
+                    </div>
+                    <div class="form-grid-3">
+                        <div class="form-group">
+                            <label>Deliverables Submitted (Period)</label>
+                            <input type="number" id="c_deliverables_submitted" class="form-control" value="0" min="0">
+                        </div>
+                        <div class="form-group">
+                            <label>Deliverables Accepted First-Time</label>
+                            <input type="number" id="c_deliverables_accepted" class="form-control" value="0" min="0">
+                        </div>
+                        <div class="form-group">
+                            <label>Defects Identified Count</label>
+                            <input type="number" id="c_defects" class="form-control" value="0" min="0">
+                        </div>
+                    </div>
+
+                    <hr class="form-divider">
+
+                    <!-- Section 5: PM Narrative & Explanations -->
+                    <div class="form-group">
+                        <label>PM Monthly Narrative & Variance Justification</label>
+                        <textarea id="c_comments" class="form-control" rows="2" placeholder="Explain any cost or schedule deviation, supply chain bottleneck, or client dependency..."></textarea>
+                    </div>
+
+                    <!-- Live Real-Time Calculation Preview Box -->
+                    <div class="kpi-preview-box" id="kpiPreviewBox">
+                        <div class="kpi-preview-title"><i class="fa-solid fa-calculator"></i> Real-Time 25-KPI Calculation Preview:</div>
+                        <div class="kpi-preview-grid">
+                            <div><strong>CPI:</strong> <span id="prevCPI">-</span></div>
+                            <div><strong>SPI:</strong> <span id="prevSPI">-</span></div>
+                            <div><strong>Cost Var (CV):</strong> <span id="prevCV">-</span></div>
+                            <div><strong>Sched Var (SV):</strong> <span id="prevSV">-</span></div>
+                            <div><strong>RAG Health:</strong> <span class="badge" id="prevRAG">-</span></div>
+                        </div>
+                    </div>
+
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-outline" id="btnCancelCutoff">Cancel</button>
+                        <button type="submit" class="btn btn-secondary"><i class="fa-solid fa-cloud-arrow-up"></i> Commit Cut-Off Snapshot (Form 3)</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===================================================================== -->
+    <!-- MODAL 3: PROJECT DETAIL & 25-KPI AUDIT COCKPIT                        -->
+    <!-- ===================================================================== -->
+    <div class="modal-overlay" id="modalProjectDetail">
+        <div class="modal-card modal-lg">
+            <div class="modal-header">
+                <h3 id="detailProjectTitle"><i class="fa-solid fa-folder-open"></i> Project Detail & 25 KPI Cockpit</h3>
+                <button class="modal-close" id="btnCloseDetailModal">&times;</button>
+            </div>
+            <div class="modal-body" id="detailModalBody">
+                <!-- Dynamically populated -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script src="/static/js/app.js?v=2.6"></script>
+</body>
+</html>
