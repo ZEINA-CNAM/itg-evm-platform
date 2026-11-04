@@ -48,6 +48,13 @@ app.include_router(api_router)
 @app.on_event("startup")
 def on_startup():
     init_db()
+    from app.db.database import get_db_connection
+    from app.db.seed_data import seed_itg_sample_portfolio
+    conn = get_db_connection()
+    count = conn.execute("SELECT COUNT(*) as c FROM projects").fetchone()["c"]
+    conn.close()
+    if count == 0:
+        seed_itg_sample_portfolio()
 
 @app.get("/", response_class=HTMLResponse)
 async def serve_index(request: Request):

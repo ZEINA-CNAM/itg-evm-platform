@@ -5,12 +5,13 @@ def seed_itg_sample_portfolio():
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    # Clear existing project records
+    # Clear existing project records and reset auto-increment sequences
     cursor.execute("DELETE FROM project_change_requests;")
     cursor.execute("DELETE FROM project_risks;")
     cursor.execute("DELETE FROM periodic_status_snapshots;")
     cursor.execute("DELETE FROM project_wbs_items;")
     cursor.execute("DELETE FROM projects;")
+    cursor.execute("DELETE FROM sqlite_sequence WHERE name IN ('projects', 'project_wbs_items', 'periodic_status_snapshots', 'project_risks', 'project_change_requests');")
 
     # Fetch real affiliate IDs
     subs = {row["code"]: row["id"] for row in conn.execute("SELECT code, id FROM subsidiaries").fetchall()}
@@ -119,7 +120,7 @@ def seed_itg_sample_portfolio():
             ],
             "snapshots": [
                 ("2026-02-28", 50000.0, 48000.0, 49000.0, "2026-12-15", 350.0, 15.0, 720.0, 2, 2, 0, 6.4, "Site surveys underway."),
-                ("2026-03-31", 120000.0, 115000.0, 122000.0, "2026-12-20", 820.0, 40.0, 720.0, 5, 5, 2, 15.3, "Hardware arrived. Slight customs delay.")
+                ("2026-03-31", 120000.0, 115000.0, 122000.0, "2026-12-22", 820.0, 40.0, 720.0, 5, 5, 2, 15.3, "Hardware arrived; aligned with CR-06 revised baseline.")
             ],
             "risks": [
                 ("RSK-05", "Custom 500kVA transformer shipping & customs clearance delay", 4, 45000.0, "High", "Marc H.", "Open"),
@@ -155,8 +156,8 @@ def seed_itg_sample_portfolio():
             ],
             "snapshots": [
                 ("2026-01-31", 30000.0, 31000.0, 29000.0, "2026-07-31", 220.0, 5.0, 240.0, 3, 3, 0, 14.0, "IAM assessment complete."),
-                ("2026-02-28", 68000.0, 70000.0, 66000.0, "2026-07-31", 500.0, 10.0, 240.0, 6, 6, 1, 31.8, "Policy sign-off achieved."),
-                ("2026-03-31", 110000.0, 114000.0, 105000.0, "2026-07-31", 780.0, 20.0, 240.0, 9, 9, 1, 51.8, "Excellent progress, CPI = 1.08, SPI = 1.04.")
+                ("2026-02-28", 68000.0, 70000.0, 66000.0, "2026-07-25", 500.0, 10.0, 240.0, 6, 6, 1, 31.8, "Policy sign-off achieved."),
+                ("2026-03-31", 110000.0, 114000.0, 105000.0, "2026-07-19", 780.0, 20.0, 240.0, 9, 9, 1, 51.8, "Excellent progress, 12 days ahead of schedule (CPI = 1.09, SPI = 1.04).")
             ],
             "risks": [
                 ("RSK-06", "Government civil status database API throughput throttling", 3, 18000.0, "Medium", "Rima S.", "Open"),
@@ -196,6 +197,72 @@ def seed_itg_sample_portfolio():
             ],
             "change_requests": [
                 ("CR-08", "Add multi-currency settlement (USD, AED, SAR, EUR) for regional resellers", 31000.0, 18, "Pending", "Jad Khoury", None, None)
+            ]
+        },
+        {
+            "subsidiary_code": "ABSEGA",
+            "code": "ABSEGA-SEC-06",
+            "name": "Enterprise SOC & Zero-Trust Network Access Rollout",
+            "client": "Capital Investment Bank",
+            "pm": "Tarek Mansour",
+            "sponsor": "Managing Director - ABSEGA",
+            "type": "Fixed Price",
+            "status": "On Hold",
+            "priority": "High",
+            "start": "2026-01-20",
+            "end": "2026-09-30",
+            "bac": 310000.0,
+            "contract_value": 410000.0,
+            "contingency": 30000.0,
+            "effort": 2200.0,
+            "fte": 3.5,
+            "wbs": [
+                ("SIEM Log Ingestion & Threat Intelligence Setup", "Milestone", 35.0, "2026-01-20", "2026-03-15", 108500.0, "Completed", 1, 1),
+                ("Zero-Trust Network Access (ZTNA) Agent Deployment", "Deliverable", 40.0, "2026-03-16", "2026-06-30", 124000.0, "Blocked", 0, 1),
+                ("Automated SOAR Playbooks & Penetration Sign-Off", "Milestone", 25.0, "2026-07-01", "2026-09-30", 77500.0, "Backlog", 0, 1)
+            ],
+            "snapshots": [
+                ("2026-01-31", 32000.0, 31000.0, 30000.0, "2026-09-30", 210.0, 5.0, 320.0, 2, 2, 0, 10.0, "SIEM deployment initiated."),
+                ("2026-02-28", 78000.0, 72000.0, 76000.0, "2026-10-15", 510.0, 25.0, 320.0, 4, 4, 1, 23.2, "Client placed phase 2 on hold pending firewall appliance delivery.")
+            ],
+            "risks": [
+                ("RSK-16", "Hardware HSM appliance customs freeze delaying ZTNA cutover", 4, 38000.0, "High", "Tarek M.", "Open")
+            ],
+            "change_requests": [
+                ("CR-09", "Extend SOC log retention archive from 90 days to 365 days", 19500.0, 12, "Pending", "Capital Investment Bank", None, None)
+            ]
+        },
+        {
+            "subsidiary_code": "KLAREO",
+            "code": "KLAREO-DMS-07",
+            "name": "Last-Mile Delivery & Fleet Route Optimization Suite",
+            "client": "Gulf Retail Distribution Group",
+            "pm": "Maya Nassar",
+            "sponsor": "Managing Director - Klareo",
+            "type": "T&M",
+            "status": "Closed",
+            "priority": "Medium",
+            "start": "2025-09-01",
+            "end": "2026-02-28",
+            "bac": 180000.0,
+            "contract_value": 245000.0,
+            "contingency": 15000.0,
+            "effort": 1400.0,
+            "fte": 2.5,
+            "wbs": [
+                ("Geospatial Routing Engine & Driver Mobile App", "Deliverable", 50.0, "2025-09-01", "2025-11-30", 90000.0, "Completed", 1, 1),
+                ("Live Fleet Telemetry & Proof-of-Delivery API", "Deliverable", 30.0, "2025-12-01", "2026-01-31", 54000.0, "Completed", 1, 1),
+                ("Final Handover & Post-Implementation Sign-Off", "Milestone", 20.0, "2026-02-01", "2026-02-28", 36000.0, "Completed", 1, 1)
+            ],
+            "snapshots": [
+                ("2026-01-31", 150000.0, 152000.0, 146000.0, "2026-02-28", 1180.0, 20.0, 300.0, 8, 8, 1, 84.4, "Telemetry phase completed ahead of schedule."),
+                ("2026-02-28", 191000.0, 191000.0, 181000.0, "2026-03-05", 1360.0, 25.0, 300.0, 11, 11, 1, 100.0, "Project formally closed on revised baseline and signed off under budget (CPI = 1.06).")
+            ],
+            "risks": [
+                ("RSK-17", "Mobile GPS battery drain on legacy Android handsets", 2, 12000.0, "Low", "Maya N.", "Closed")
+            ],
+            "change_requests": [
+                ("CR-10", "Add cold-chain temperature sensor alert webhook", 11000.0, 5, "Approved", "Maya Nassar", "Holding PMO", "2026-01-18")
             ]
         }
     ]

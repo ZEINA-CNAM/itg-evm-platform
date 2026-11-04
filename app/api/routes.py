@@ -29,14 +29,16 @@ def get_subsidiaries():
 @router.get("/projects")
 def get_projects(
     subsidiary_id: Optional[int] = None,
+    sector: Optional[str] = None,
     status: Optional[str] = None,
     rag_status: Optional[str] = None,
+    schedule_bucket: Optional[str] = None,
     project_type: Optional[str] = None,
     cut_off_date: Optional[str] = None
 ):
     conn = get_db_connection()
     query = """
-    SELECT p.*, s.name as subsidiary_name, s.code as subsidiary_code
+    SELECT p.*, s.name as subsidiary_name, s.code as subsidiary_code, s.sector as subsidiary_sector
     FROM projects p
     JOIN subsidiaries s ON p.subsidiary_id = s.id
     WHERE 1=1
@@ -47,9 +49,18 @@ def get_projects(
         query += " AND p.subsidiary_id = ?"
         params.append(subsidiary_id)
 
+    if sector and sector != "All":
+        query += " AND s.sector = ?"
+        params.append(sector)
+
     if status and status != "All":
-        query += " AND p.status = ?"
-        params.append(status)
+        if status == "Not Started":
+            query += " AND p.status IN ('Not Started', 'Pipeline')"
+        elif status == "Closed":
+            query += " AND p.status IN ('Closed', 'Completed')"
+        else:
+            query += " AND p.status = ?"
+            params.append(status)
 
     if project_type and project_type != "All":
         query += " AND p.project_type = ?"
@@ -96,10 +107,91 @@ def get_projects(
             if kpis["rag_status"].upper() != rag_status.upper():
                 continue
 
+        # Apply 3-Bucket Schedule Velocity filter if requested (ADVANCED, ON_TRACK, DELAYED)
+        if schedule_bucket and schedule_bucket != "All":
+            if kpis.get("schedule_bucket", "ON_TRACK").upper() != schedule_bucket.upper():
+                continue
+
         enriched_projects.append(p_dict)
 
     conn.close()
     return enriched_projects
+
+@router.patch("/projects/{project_id}/status")
+def update_project_status(project_id: int, status: str = Query(..., description="New lifecycle status")):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE projects SET status = ? WHERE id = ?", (status, project_id))
+    if cursor.rowcount == 0:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Project not found")
+    conn.commit()
+    conn.close()
+    return {"status": "success", "message": f"Project status updated to {status}"}
+
+@router.post("/projects/import-csv")
+def import_projects_bulk(records: List[Dict[str, Any]]):
+    """
+    Bulk-imports projects from a CSV upload into the central SQLite PMO Hub database.
+    Matches affiliate by code (or defaults to first affiliate) and auto-creates a 100%-weighted WBS baseline if none exists.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    subs = {r["code"].upper(): r["id"] for r in conn.execute("SELECT id, code FROM subsidiaries").fetchall()}
+    default_sub_id = next(iter(subs.values()), 1)
+
+    imported_count = 0
+    for row in records:
+        code = str(row.get("project_code") or row.get("Code") or "").strip()
+        name = str(row.get("name") or row.get("Project Name") or "").strip()
+        if not code or not name:
+            continue
+        sub_code = str(row.get("subsidiary_code") or row.get("Affiliate") or "").strip().upper()
+        sub_id = subs.get(sub_code, default_sub_id)
+        client = str(row.get("client") or row.get("Client") or "Enterprise Client").strip()
+        pm = str(row.get("pm") or row.get("PM") or "Assigned PM").strip()
+        sponsor = str(row.get("sponsor") or row.get("Sponsor") or f"MD - {sub_code or 'ITG'}").strip()
+        p_type = str(row.get("project_type") or row.get("Type") or "Fixed Price").strip()
+        p_status = str(row.get("status") or row.get("Status") or "Active").strip()
+        start_d = str(row.get("baseline_start_date") or row.get("Start Date") or "2026-01-01").strip()
+        end_d = str(row.get("baseline_end_date") or row.get("End Date") or "2026-12-31").strip()
+        bac_val = float(row.get("bac") or row.get("BAC") or 100000.0)
+        contract_val = float(row.get("contract_value") or row.get("Contract Value") or (bac_val * 1.25))
+        cont_val = float(row.get("contingency_reserve") or row.get("Contingency") or (bac_val * 0.08))
+        effort_val = float(row.get("planned_effort_hours") or row.get("Effort Hours") or 1200.0)
+        fte_val = float(row.get("planned_fte") or row.get("FTE") or 2.0)
+
+        existing = cursor.execute("SELECT id FROM projects WHERE project_code = ?", (code,)).fetchone()
+        if existing:
+            cursor.execute(
+                """UPDATE projects SET subsidiary_id=?, name=?, client=?, pm=?, sponsor=?,
+                   project_type=?, status=?, baseline_start_date=?, baseline_end_date=?,
+                   bac=?, contract_value=?, contingency_reserve=?, planned_effort_hours=?, planned_fte=?
+                   WHERE id=?""",
+                (sub_id, name, client, pm, sponsor, p_type, p_status, start_d, end_d, bac_val, contract_val, cont_val, effort_val, fte_val, existing["id"])
+            )
+            imported_count += 1
+        else:
+            cursor.execute(
+                """INSERT INTO projects (
+                    subsidiary_id, project_code, name, client, pm, sponsor, project_type, status, priority,
+                    baseline_start_date, baseline_end_date, bac, contract_value, contingency_reserve,
+                    planned_effort_hours, planned_fte, is_locked
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'High', ?, ?, ?, ?, ?, ?, ?, 1)""",
+                (sub_id, code, name, client, pm, sponsor, p_type, p_status, start_d, end_d, bac_val, contract_val, cont_val, effort_val, fte_val)
+            )
+            pid = cursor.lastrowid
+            cursor.execute(
+                """INSERT INTO project_wbs_items (project_id, item_name, item_type, weight_pct, planned_start, planned_finish, allocated_budget, status, is_completed, is_critical_path)
+                   VALUES (?, 'Phase 1: Core Scope & Architecture', 'Milestone', 40.0, ?, ?, ?, 'In Progress', 0, 1),
+                          (?, 'Phase 2: Implementation & Delivery Sign-Off', 'Deliverable', 60.0, ?, ?, ?, 'Backlog', 0, 1)""",
+                (pid, start_d, end_d, round(bac_val * 0.4, 2), pid, start_d, end_d, round(bac_val * 0.6, 2))
+            )
+            imported_count += 1
+
+    conn.commit()
+    conn.close()
+    return {"status": "success", "imported_count": imported_count, "message": f"Successfully imported/updated {imported_count} project(s) into the PMO Hub database."}
 
 @router.get("/projects/{project_id}")
 def get_project_detail(project_id: int):
@@ -317,18 +409,58 @@ def update_change_request_status(cr_id: int, payload: ChangeRequestStatusUpdate)
     conn.close()
     return {"status": "success", "message": f"Change request status updated to {payload.status}"}
 
+@router.delete("/risks/{risk_id}")
+def delete_risk(risk_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM project_risks WHERE id = ?", (risk_id,))
+    if cursor.rowcount == 0:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Risk not found")
+    conn.commit()
+    conn.close()
+    return {"status": "success", "message": "Risk deleted successfully"}
+
+@router.delete("/change-requests/{cr_id}")
+def delete_change_request(cr_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM project_change_requests WHERE id = ?", (cr_id,))
+    if cursor.rowcount == 0:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Change request not found")
+    conn.commit()
+    conn.close()
+    return {"status": "success", "message": "Change request deleted successfully"}
+
 
 # =========================================================================
 # DASHBOARD AGGREGATE ENDPOINTS (THE 6 SCREENS)
 # =========================================================================
 @router.get("/dashboard/portfolio")
-def get_portfolio_dashboard(subsidiary_id: Optional[int] = None, rag_status: Optional[str] = None):
-    projects = get_projects(subsidiary_id=subsidiary_id, rag_status=rag_status)
+def get_portfolio_dashboard(
+    subsidiary_id: Optional[int] = None,
+    sector: Optional[str] = None,
+    status: Optional[str] = None,
+    rag_status: Optional[str] = None,
+    schedule_bucket: Optional[str] = None
+):
+    # Projects before schedule_bucket filter so the 3-bucket Velocity Bar always shows total counts for current filter context
+    base_projects = get_projects(subsidiary_id=subsidiary_id, sector=sector, status=status, rag_status=rag_status)
+    base_rollup = compute_group_portfolio_rollup(base_projects)
+
+    projects = get_projects(
+        subsidiary_id=subsidiary_id,
+        sector=sector,
+        status=status,
+        rag_status=rag_status,
+        schedule_bucket=schedule_bucket
+    )
     rollup = compute_group_portfolio_rollup(projects)
 
-    # Subsidiary breakdown
+    # Subsidiary & Cluster breakdown
     conn = get_db_connection()
-    subs = conn.execute("SELECT id, code, name FROM subsidiaries ORDER BY id ASC").fetchall()
+    subs = conn.execute("SELECT id, code, name, sector FROM subsidiaries ORDER BY id ASC").fetchall()
     conn.close()
 
     sub_breakdown = []
@@ -340,6 +472,7 @@ def get_portfolio_dashboard(subsidiary_id: Optional[int] = None, rag_status: Opt
             "subsidiary_id": sub_id,
             "code": s["code"],
             "name": s["name"],
+            "sector": s["sector"],
             "project_count": len(sub_projs),
             "bac": sub_rollup["group_bac"],
             "ac": sub_rollup["group_ac"],
@@ -348,24 +481,57 @@ def get_portfolio_dashboard(subsidiary_id: Optional[int] = None, rag_status: Opt
             "rag_counts": sub_rollup["rag_counts"]
         })
 
+    # 4 ITG Holding Clusters Rollup
+    all_cluster_projs = get_projects(status=status, rag_status=rag_status, schedule_bucket=schedule_bucket)
+    clusters = ["Enterprise & Services", "Software & Solutions", "Distribution & Retail", "Site & Power"]
+    cluster_breakdown = []
+    for c_name in clusters:
+        c_projs = [p for p in all_cluster_projs if p.get("subsidiary_sector") == c_name]
+        c_roll = compute_group_portfolio_rollup(c_projs)
+        cluster_breakdown.append({
+            "sector": c_name,
+            "project_count": len(c_projs),
+            "bac": c_roll["group_bac"],
+            "ac": c_roll["group_ac"],
+            "cpi": c_roll["group_cpi"],
+            "spi": c_roll["group_spi"],
+            "schedule_counts": c_roll["schedule_counts"],
+            "rag_counts": c_roll["rag_counts"]
+        })
+
     return {
         "rollup": rollup,
+        "velocity_counts": base_rollup["schedule_counts"],
+        "cluster_breakdown": cluster_breakdown,
         "subsidiary_breakdown": sub_breakdown,
         "projects": projects
     }
 
 @router.get("/dashboard/demand")
-def get_demand_dashboard(subsidiary_id: Optional[int] = None):
+def get_demand_dashboard(
+    subsidiary_id: Optional[int] = None,
+    sector: Optional[str] = None,
+    status: Optional[str] = None,
+    rag_status: Optional[str] = None,
+    schedule_bucket: Optional[str] = None
+):
     conn = get_db_connection()
-    projects = get_projects(subsidiary_id=subsidiary_id)
+    projects = get_projects(subsidiary_id=subsidiary_id, sector=sector, status=status, rag_status=rag_status, schedule_bucket=schedule_bucket)
 
-    total_fte_allocated = sum(p.get("planned_fte", 1.0) for p in projects if p["status"] == "Active")
+    if status and status not in ("All", "Active"):
+        target_projects = projects
+    else:
+        target_projects = [p for p in projects if p["status"] == "Active"]
+
+    total_fte_allocated = sum(p.get("planned_fte", 1.0) for p in target_projects)
     pipeline_projects = [p for p in projects if p["status"] in ("Not Started", "Pipeline")]
     pipeline_fte_required = sum(p.get("planned_fte", 1.0) for p in pipeline_projects)
 
-    # Fetch all 18 ITG affiliates (or filtered by subsidiary_id)
+    # Fetch all 18 ITG affiliates (or filtered by subsidiary_id / sector)
     if subsidiary_id and subsidiary_id > 0:
         sub_rows = conn.execute("SELECT * FROM subsidiaries WHERE id = ? ORDER BY sector, name", (subsidiary_id,)).fetchall()
+    elif sector and sector != "All":
+        sub_rows = conn.execute("SELECT * FROM subsidiaries WHERE sector = ? ORDER BY sector, name", (sector,)).fetchall()
     else:
         sub_rows = conn.execute("SELECT * FROM subsidiaries ORDER BY sector, name").fetchall()
 
@@ -378,23 +544,23 @@ def get_demand_dashboard(subsidiary_id: Optional[int] = None):
         headcount = s["headcount"] or 25
         total_group_headcount += headcount
 
-        # Committed FTE is sum of planned_fte for active projects under this affiliate
-        affiliate_active_projs = [p for p in projects if p["subsidiary_id"] == s_id and p["status"] == "Active"]
-        committed_fte = sum(p.get("planned_fte", 1.0) for p in affiliate_active_projs)
+        # Committed FTE is sum of planned_fte for matching projects under this affiliate
+        affiliate_projs = [p for p in target_projects if p["subsidiary_id"] == s_id]
+        committed_fte = sum(p.get("planned_fte", 1.0) for p in affiliate_projs)
         total_group_committed += committed_fte
 
         utilization_pct = round((committed_fte / headcount) * 100, 1) if headcount > 0 else 0.0
         
         if utilization_pct == 0:
-            status = "AVAILABLE"
+            cap_status = "AVAILABLE"
         elif utilization_pct > 100:
-            status = "OVER_ALLOCATED"
+            cap_status = "OVER_ALLOCATED"
         elif utilization_pct > 88:
-            status = "NEAR_CAPACITY"
+            cap_status = "NEAR_CAPACITY"
         elif utilization_pct >= 60:
-            status = "OPTIMAL"
+            cap_status = "OPTIMAL"
         else:
-            status = "AVAILABLE"
+            cap_status = "AVAILABLE"
 
         departments.append({
             "subsidiary_id": s_id,
@@ -405,8 +571,8 @@ def get_demand_dashboard(subsidiary_id: Optional[int] = None):
             "allocated_fte": round(committed_fte, 1),
             "available_fte": round(headcount - committed_fte, 1),
             "utilization_pct": utilization_pct,
-            "status": status,
-            "active_projects_count": len(affiliate_active_projs)
+            "status": cap_status,
+            "active_projects_count": len(affiliate_projs)
         })
 
     group_avg_utilization = round((total_group_committed / total_group_headcount) * 100, 1) if total_group_headcount > 0 and total_group_committed > 0 else 0.0
@@ -422,7 +588,7 @@ def get_demand_dashboard(subsidiary_id: Optional[int] = None):
         },
         "departments": departments,
         "pipeline_projects": pipeline_projects,
-        "active_projects": [p for p in projects if p["status"] == "Active"]
+        "active_projects": target_projects
     }
 
 def get_impact_level(impact_cost: float) -> int:
@@ -438,60 +604,55 @@ def get_impact_level(impact_cost: float) -> int:
         return 5
 
 @router.get("/dashboard/risks")
-def get_risks_dashboard(subsidiary_id: Optional[int] = None, project_id: Optional[int] = None):
+def get_risks_dashboard(
+    subsidiary_id: Optional[int] = None,
+    sector: Optional[str] = None,
+    project_id: Optional[int] = None,
+    status: Optional[str] = None,
+    rag_status: Optional[str] = None,
+    schedule_bucket: Optional[str] = None
+):
+    filtered_projs = get_projects(subsidiary_id=subsidiary_id, sector=sector, status=status, rag_status=rag_status, schedule_bucket=schedule_bucket)
+    if project_id and project_id > 0:
+        filtered_projs = [p for p in filtered_projs if p["id"] == project_id]
+    proj_ids = [p["id"] for p in filtered_projs]
+
     conn = get_db_connection()
-    
-    # 1. Fetch filtered risks
-    query_risks = """
-    SELECT r.*, p.name as project_name, p.project_code, s.code as subsidiary_code, s.name as subsidiary_name
-    FROM project_risks r
-    JOIN projects p ON r.project_id = p.id
-    JOIN subsidiaries s ON p.subsidiary_id = s.id
-    WHERE 1=1
-    """
-    params_risks = []
-    if subsidiary_id and subsidiary_id > 0:
-        query_risks += " AND p.subsidiary_id = ?"
-        params_risks.append(subsidiary_id)
-    if project_id and project_id > 0:
-        query_risks += " AND p.id = ?"
-        params_risks.append(project_id)
-        
-    query_risks += " ORDER BY r.exposure_cost DESC, r.id DESC"
-    risks_rows = conn.execute(query_risks, params_risks).fetchall()
-    
-    # 2. Fetch filtered change requests
-    query_crs = """
-    SELECT cr.*, p.name as project_name, p.project_code, s.code as subsidiary_code, s.name as subsidiary_name
-    FROM project_change_requests cr
-    JOIN projects p ON cr.project_id = p.id
-    JOIN subsidiaries s ON p.subsidiary_id = s.id
-    WHERE 1=1
-    """
-    params_crs = []
-    if subsidiary_id and subsidiary_id > 0:
-        query_crs += " AND p.subsidiary_id = ?"
-        params_crs.append(subsidiary_id)
-    if project_id and project_id > 0:
-        query_crs += " AND p.id = ?"
-        params_crs.append(project_id)
-        
-    query_crs += " ORDER BY cr.id DESC"
-    crs_rows = conn.execute(query_crs, params_crs).fetchall()
 
-    # 3. Fetch contingency reserve across relevant projects
-    query_cont = "SELECT COALESCE(SUM(contingency_reserve), 0) as total_contingency FROM projects WHERE 1=1"
-    params_cont = []
-    if subsidiary_id and subsidiary_id > 0:
-        query_cont += " AND subsidiary_id = ?"
-        params_cont.append(subsidiary_id)
-    if project_id and project_id > 0:
-        query_cont += " AND id = ?"
-        params_cont.append(project_id)
-    cont_row = conn.execute(query_cont, params_cont).fetchone()
-    total_contingency = float(cont_row["total_contingency"]) if cont_row else 0.0
+    if not proj_ids:
+        conn.close()
+        risks_rows = []
+        crs_rows = []
+        total_contingency = 0.0
+    else:
+        placeholders = ",".join(["?"] * len(proj_ids))
+        # 1. Fetch filtered risks
+        query_risks = f"""
+        SELECT r.*, p.name as project_name, p.project_code, s.code as subsidiary_code, s.name as subsidiary_name
+        FROM project_risks r
+        JOIN projects p ON r.project_id = p.id
+        JOIN subsidiaries s ON p.subsidiary_id = s.id
+        WHERE p.id IN ({placeholders})
+        ORDER BY r.exposure_cost DESC, r.id DESC
+        """
+        risks_rows = conn.execute(query_risks, proj_ids).fetchall()
 
-    conn.close()
+        # 2. Fetch filtered change requests
+        query_crs = f"""
+        SELECT cr.*, p.name as project_name, p.project_code, s.code as subsidiary_code, s.name as subsidiary_name
+        FROM project_change_requests cr
+        JOIN projects p ON cr.project_id = p.id
+        JOIN subsidiaries s ON p.subsidiary_id = s.id
+        WHERE p.id IN ({placeholders})
+        ORDER BY cr.id DESC
+        """
+        crs_rows = conn.execute(query_crs, proj_ids).fetchall()
+
+        # 3. Fetch contingency reserve across relevant projects
+        query_cont = f"SELECT COALESCE(SUM(contingency_reserve), 0) as total_contingency FROM projects WHERE id IN ({placeholders})"
+        cont_row = conn.execute(query_cont, proj_ids).fetchone()
+        total_contingency = float(cont_row["total_contingency"]) if cont_row else 0.0
+        conn.close()
 
 
     risks = []
@@ -590,25 +751,33 @@ def get_risks_dashboard(subsidiary_id: Optional[int] = None, project_id: Optiona
     }
 
 @router.get("/dashboard/tasks")
-def get_tasks_dashboard(subsidiary_id: Optional[int] = None, project_id: Optional[int] = None):
-    conn = get_db_connection()
-    query = """
-    SELECT w.*, p.name as project_name, p.project_code, s.code as subsidiary_code
-    FROM project_wbs_items w
-    JOIN projects p ON w.project_id = p.id
-    JOIN subsidiaries s ON p.subsidiary_id = s.id
-    WHERE 1=1
-    """
-    params = []
-    if subsidiary_id and subsidiary_id > 0:
-        query += " AND p.subsidiary_id = ?"
-        params.append(subsidiary_id)
+def get_tasks_dashboard(
+    subsidiary_id: Optional[int] = None,
+    sector: Optional[str] = None,
+    project_id: Optional[int] = None,
+    status: Optional[str] = None,
+    rag_status: Optional[str] = None,
+    schedule_bucket: Optional[str] = None
+):
+    filtered_projs = get_projects(subsidiary_id=subsidiary_id, sector=sector, status=status, rag_status=rag_status, schedule_bucket=schedule_bucket)
     if project_id and project_id > 0:
-        query += " AND p.id = ?"
-        params.append(project_id)
+        filtered_projs = [p for p in filtered_projs if p["id"] == project_id]
+    proj_ids = [p["id"] for p in filtered_projs]
 
-    query += " ORDER BY w.id ASC"
-    items = conn.execute(query, params).fetchall()
+    conn = get_db_connection()
+    if not proj_ids:
+        items = []
+    else:
+        placeholders = ",".join(["?"] * len(proj_ids))
+        query = f"""
+        SELECT w.*, p.name as project_name, p.project_code, p.bac as project_bac, s.code as subsidiary_code
+        FROM project_wbs_items w
+        JOIN projects p ON w.project_id = p.id
+        JOIN subsidiaries s ON p.subsidiary_id = s.id
+        WHERE p.id IN ({placeholders})
+        ORDER BY w.id ASC
+        """
+        items = conn.execute(query, proj_ids).fetchall()
 
     kanban = {
         "Backlog": [],
@@ -620,6 +789,9 @@ def get_tasks_dashboard(subsidiary_id: Optional[int] = None, project_id: Optiona
 
     for item in items:
         i_dict = dict(item)
+        bac_val = float(i_dict.get("project_bac") or 0.0)
+        weight_val = float(i_dict.get("weight_pct") or 0.0)
+        i_dict["planned_ev_dollars"] = round((weight_val / 100.0) * bac_val, 2)
         st = i_dict.get("status") or "Backlog"
         if st not in kanban:
             st = "In Progress"
@@ -630,24 +802,41 @@ def get_tasks_dashboard(subsidiary_id: Optional[int] = None, project_id: Optiona
         "kanban": kanban,
         "total_items": len(items),
         "blocked_count": len(kanban["Blocked"]),
-        "completed_count": len(kanban["Completed"])
+        "completed_count": len(kanban["Completed"]),
+        "in_progress_count": len(kanban["In Progress"]) + len(kanban["In Review"])
     }
 
 @router.get("/dashboard/financials")
-def get_financials_dashboard(subsidiary_id: Optional[int] = None):
-    projects = get_projects(subsidiary_id=subsidiary_id)
+def get_financials_dashboard(
+    subsidiary_id: Optional[int] = None,
+    sector: Optional[str] = None,
+    status: Optional[str] = None,
+    rag_status: Optional[str] = None,
+    schedule_bucket: Optional[str] = None
+):
+    projects = get_projects(subsidiary_id=subsidiary_id, sector=sector, status=status, rag_status=rag_status, schedule_bucket=schedule_bucket)
 
-    total_contract_value = sum(p.get("contract_value", 0) for p in projects)
-    total_bac = sum(p.get("bac", 0) for p in projects)
+    total_contract_value = sum(p["kpis"]["contract_value"] for p in projects)
+    total_original_bac = sum(p["kpis"]["original_bac"] for p in projects)
+    total_approved_cr_cost = sum(p["kpis"]["approved_cr_cost"] for p in projects)
+    total_revised_bac = sum(p["kpis"]["revised_bac"] for p in projects)
     total_ac = sum(p["kpis"]["ac"] for p in projects)
     total_ev = sum(p["kpis"]["ev"] for p in projects)
+    total_eac = sum(p["kpis"]["eac"] for p in projects)
+    total_etc = sum(p["kpis"]["etc"] for p in projects)
 
     group_cpi = round((total_ev / total_ac) if total_ac > 0 else 1.0, 2)
     group_vac = round(sum(p["kpis"]["vac"] for p in projects), 2)
 
-    # Fixed Price vs T&M breakdown
+    planned_margin = round(total_contract_value - total_revised_bac, 2)
+    planned_margin_pct = round((planned_margin / total_contract_value * 100.0) if total_contract_value > 0 else 0.0, 1)
+    forecast_margin = round(total_contract_value - total_eac, 2)
+    forecast_margin_pct = round((forecast_margin / total_contract_value * 100.0) if total_contract_value > 0 else 0.0, 1)
+
+    # Fixed Price vs T&M vs Internal breakdown
     fixed_price = [p for p in projects if p.get("project_type") in ("Fixed Price", "Fixed-Price")]
     tm_projects = [p for p in projects if p.get("project_type") in ("T&M", "Time & Materials")]
+    other_projects = [p for p in projects if p.get("project_type") not in ("Fixed Price", "Fixed-Price", "T&M", "Time & Materials")]
 
     fp_cpi = round((sum(p["kpis"]["ev"] for p in fixed_price) / sum(p["kpis"]["ac"] for p in fixed_price)) if fixed_price and sum(p["kpis"]["ac"] for p in fixed_price) > 0 else 1.0, 2)
     tm_cpi = round((sum(p["kpis"]["ev"] for p in tm_projects) / sum(p["kpis"]["ac"] for p in tm_projects)) if tm_projects and sum(p["kpis"]["ac"] for p in tm_projects) > 0 else 1.0, 2)
@@ -655,21 +844,37 @@ def get_financials_dashboard(subsidiary_id: Optional[int] = None):
     return {
         "summary": {
             "total_contract_value": round(total_contract_value, 2),
-            "total_bac": round(total_bac, 2),
+            "total_original_bac": round(total_original_bac, 2),
+            "total_approved_cr_cost": round(total_approved_cr_cost, 2),
+            "total_bac": round(total_revised_bac, 2),
             "total_ac": round(total_ac, 2),
             "total_ev": round(total_ev, 2),
+            "total_eac": round(total_eac, 2),
+            "total_etc": round(total_etc, 2),
             "cpi": group_cpi,
             "net_vac": group_vac,
+            "planned_margin": planned_margin,
+            "planned_margin_pct": planned_margin_pct,
+            "forecast_margin": forecast_margin,
+            "forecast_margin_pct": forecast_margin_pct,
             "fixed_price_count": len(fixed_price),
             "fixed_price_cpi": fp_cpi,
             "tm_count": len(tm_projects),
-            "tm_cpi": tm_cpi
+            "tm_cpi": tm_cpi,
+            "other_count": len(other_projects)
         },
         "projects": projects
     }
 
 @router.get("/dashboard/scurve")
-def get_scurve_dashboard(project_id: Optional[int] = None, subsidiary_id: Optional[int] = None):
+def get_scurve_dashboard(
+    project_id: Optional[int] = None,
+    subsidiary_id: Optional[int] = None,
+    sector: Optional[str] = None,
+    status: Optional[str] = None,
+    rag_status: Optional[str] = None,
+    schedule_bucket: Optional[str] = None
+):
     conn = get_db_connection()
 
     if project_id and project_id > 0:
@@ -688,49 +893,111 @@ def get_scurve_dashboard(project_id: Optional[int] = None, subsidiary_id: Option
         ev_series = [s["ev"] for s in snaps]
         ac_series = [s["ac"] for s in snaps]
 
+        snapshots_data = []
+        for s in snaps:
+            s_dict = dict(s)
+            cpi = round(s_dict["ev"] / s_dict["ac"], 2) if s_dict["ac"] > 0 else 1.0
+            spi = round(s_dict["ev"] / s_dict["pv"], 2) if s_dict["pv"] > 0 else 1.0
+            cv = round(s_dict["ev"] - s_dict["ac"], 2)
+            sv = round(s_dict["ev"] - s_dict["pv"], 2)
+            s_dict["cpi"] = cpi
+            s_dict["spi"] = spi
+            s_dict["cv"] = cv
+            s_dict["sv"] = sv
+            snapshots_data.append(s_dict)
+
         conn.close()
         return {
             "project_name": p["name"],
+            "project_code": p["project_code"],
             "bac": p["bac"],
             "labels": labels,
             "pv_series": pv_series,
             "ev_series": ev_series,
-            "ac_series": ac_series
+            "ac_series": ac_series,
+            "snapshots": snapshots_data
         }
     else:
-        # Group-wide S-Curve aggregation across distinct cut-off dates
-        query = """
-        SELECT cut_off_date, SUM(pv) as sum_pv, SUM(ev) as sum_ev, SUM(ac) as sum_ac
-        FROM periodic_status_snapshots
-        """
-        params = []
-        if subsidiary_id and subsidiary_id > 0:
-            query += " JOIN projects ON periodic_status_snapshots.project_id = projects.id WHERE projects.subsidiary_id = ?"
-            params.append(subsidiary_id)
+        # Group-wide S-Curve aggregation across matching filtered projects
+        filtered_projs = get_projects(subsidiary_id=subsidiary_id, sector=sector, status=status, rag_status=rag_status, schedule_bucket=schedule_bucket)
+        proj_ids = [p["id"] for p in filtered_projs]
 
-        query += " GROUP BY cut_off_date ORDER BY cut_off_date ASC"
-        rows = conn.execute(query, params).fetchall()
+        if not proj_ids:
+            conn.close()
+            return {
+                "project_name": "Consolidated ITG Portfolio",
+                "project_code": "ALL-ITG",
+                "labels": [],
+                "pv_series": [],
+                "ev_series": [],
+                "ac_series": [],
+                "snapshots": []
+            }
+
+        placeholders = ",".join(["?"] * len(proj_ids))
+        query = f"""
+        SELECT cut_off_date, SUM(pv) as sum_pv, SUM(ev) as sum_ev, SUM(ac) as sum_ac,
+               COUNT(DISTINCT project_id) as project_count,
+               SUM(actual_effort_hours) as sum_effort,
+               SUM(defects_count) as sum_defects
+        FROM periodic_status_snapshots
+        WHERE project_id IN ({placeholders})
+        GROUP BY cut_off_date ORDER BY cut_off_date ASC
+        """
+        rows = conn.execute(query, proj_ids).fetchall()
 
         labels = [r["cut_off_date"] for r in rows]
         pv_series = [round(r["sum_pv"], 2) for r in rows]
         ev_series = [round(r["sum_ev"], 2) for r in rows]
         ac_series = [round(r["sum_ac"], 2) for r in rows]
 
+        group_snaps = []
+        for r in rows:
+            sum_ac = float(r["sum_ac"])
+            sum_pv = float(r["sum_pv"])
+            sum_ev = float(r["sum_ev"])
+            cpi = round(sum_ev / sum_ac, 2) if sum_ac > 0 else 1.0
+            spi = round(sum_ev / sum_pv, 2) if sum_pv > 0 else 1.0
+            group_snaps.append({
+                "cut_off_date": r["cut_off_date"],
+                "pv": sum_pv,
+                "ev": sum_ev,
+                "ac": sum_ac,
+                "cv": round(sum_ev - sum_ac, 2),
+                "sv": round(sum_ev - sum_pv, 2),
+                "cpi": cpi,
+                "spi": spi,
+                "project_count": r["project_count"],
+                "actual_effort_hours": r["sum_effort"] or 0,
+                "defects_count": r["sum_defects"] or 0,
+                "pm_comments": f"Consolidated cadence snapshot across {r['project_count']} matching project(s)."
+            })
+
         conn.close()
         return {
             "project_name": "Consolidated ITG Portfolio",
+            "project_code": "ALL-ITG",
             "labels": labels,
             "pv_series": pv_series,
             "ev_series": ev_series,
-            "ac_series": ac_series
+            "ac_series": ac_series,
+            "snapshots": group_snaps
         }
 
 @router.get("/dashboard/timeline")
-def get_timeline_dashboard(subsidiary_id: Optional[int] = None):
-    projects = get_projects(subsidiary_id=subsidiary_id)
+def get_timeline_dashboard(
+    subsidiary_id: Optional[int] = None,
+    sector: Optional[str] = None,
+    status: Optional[str] = None,
+    rag_status: Optional[str] = None,
+    schedule_bucket: Optional[str] = None
+):
+    projects = get_projects(subsidiary_id=subsidiary_id, sector=sector, status=status, rag_status=rag_status, schedule_bucket=schedule_bucket)
 
     critical_milestones = []
     slippages = []
+    total_wbs = 0
+    completed_wbs = 0
 
     conn = get_db_connection()
     for p in projects:
@@ -740,27 +1007,43 @@ def get_timeline_dashboard(subsidiary_id: Optional[int] = None):
         ).fetchall()
 
         for w in wbs:
+            total_wbs += 1
             w_dict = dict(w)
+            if int(w_dict.get("is_completed") or 0) == 1 or w_dict.get("status") == "Completed":
+                completed_wbs += 1
+            w_dict["project_code"] = p["project_code"]
             w_dict["project_name"] = p["name"]
             w_dict["subsidiary_code"] = p["subsidiary_code"]
-            if w_dict.get("is_critical_path") == 1:
-                critical_milestones.append(w_dict)
+            w_dict["project_bac"] = p["kpis"]["revised_bac"]
+            w_dict["project_delay_days"] = p["kpis"]["delay_days"]
+            critical_milestones.append(w_dict)
 
-        if p["kpis"]["delay_days"] > 30:
+        if p["kpis"]["delay_days"] > 0:
             slippages.append({
                 "project_code": p["project_code"],
                 "project_name": p["name"],
                 "subsidiary_name": p["subsidiary_name"],
                 "delay_days": p["kpis"]["delay_days"],
                 "baseline_end_date": p["baseline_end_date"],
+                "revised_baseline_end_date": p["kpis"]["revised_baseline_end_date"],
                 "forecast_completion_date": p["kpis"]["forecast_completion_date"]
             })
 
     conn.close()
+    max_delay = max([p["kpis"]["delay_days"] for p in projects], default=0) if projects else 0
+    achieve_pct = round((completed_wbs / total_wbs * 100.0) if total_wbs > 0 else 0.0, 1)
+
     return {
+        "summary": {
+            "total_items": total_wbs,
+            "completed_items": completed_wbs,
+            "achievement_pct": achieve_pct,
+            "delayed_projects_count": len(slippages),
+            "max_delay_days": max(0, max_delay)
+        },
         "projects": projects,
         "critical_milestones": critical_milestones,
-        "slippages": slippages
+        "slippages": [s for s in slippages if s["delay_days"] > 30]
     }
 
 # =========================================================================
@@ -779,7 +1062,8 @@ def seed_sample_portfolio():
 @router.post("/demo/reset")
 def reset_to_zero_data():
     """
-    Wipes all projects, snapshots, and WBS items, restoring the clean-slate Zero-Data state.
+    Wipes all projects, snapshots, risks, change requests, and WBS items,
+    and resets auto-increment counters, restoring the 100% clean-slate Zero-Data state.
     """
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -788,6 +1072,7 @@ def reset_to_zero_data():
     cursor.execute("DELETE FROM periodic_status_snapshots;")
     cursor.execute("DELETE FROM project_wbs_items;")
     cursor.execute("DELETE FROM projects;")
+    cursor.execute("DELETE FROM sqlite_sequence WHERE name IN ('projects', 'project_wbs_items', 'periodic_status_snapshots', 'project_risks', 'project_change_requests');")
     conn.commit()
     conn.close()
     return {"status": "success", "message": "System reset to 100% clean-slate Zero-Data state."}

@@ -11,7 +11,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <link rel="stylesheet" href="/static/css/style.css?v=2.7">
+    <link rel="stylesheet" href="/static/css/style.css?v=2.9">
 </head>
 <body>
     <!-- Top Navigation Bar -->
@@ -28,11 +28,11 @@
 
         <nav class="nav-tabs" id="navTabs">
             <button class="nav-tab active" data-tab="portfolio"><i class="fa-solid fa-chart-pie"></i> 1. Portfolio</button>
-            <button class="nav-tab" data-tab="risks"><i class="fa-solid fa-shield-halved"></i> 2. Risks & Governance</button>
-            <button class="nav-tab" data-tab="tasks"><i class="fa-solid fa-list-check"></i> 3. Tasks</button>
-            <button class="nav-tab" data-tab="financials"><i class="fa-solid fa-file-invoice-dollar"></i> 4. Financials</button>
-            <button class="nav-tab" data-tab="scurve"><i class="fa-solid fa-chart-line"></i> 5. Budget (S-Curve)</button>
-            <button class="nav-tab" data-tab="timeline"><i class="fa-solid fa-calendar-days"></i> 6. Timeline</button>
+            <button class="nav-tab" data-tab="financials"><i class="fa-solid fa-file-invoice-dollar"></i> 2. Financials</button>
+            <button class="nav-tab" data-tab="scurve"><i class="fa-solid fa-chart-line"></i> 3. Budget (S-Curve)</button>
+            <button class="nav-tab" data-tab="timeline"><i class="fa-solid fa-calendar-days"></i> 4. Timeline</button>
+            <button class="nav-tab" data-tab="tasks"><i class="fa-solid fa-list-check"></i> 5. Tasks (WBS)</button>
+            <button class="nav-tab" data-tab="risks"><i class="fa-solid fa-shield-halved"></i> 6. Risks & Governance</button>
         </nav>
 
         <div class="nav-actions">
@@ -46,7 +46,18 @@
     <!-- Global Persistent Filters Bar (Tier 1) -->
     <section class="global-filter-bar">
         <div class="filter-group">
-            <label for="subsidiaryFilter"><i class="fa-solid fa-building"></i> Subsidiary:</label>
+            <label for="clusterFilter"><i class="fa-solid fa-sitemap"></i> Cluster:</label>
+            <select id="clusterFilter" class="filter-select">
+                <option value="All">All 4 ITG Clusters</option>
+                <option value="Enterprise & Services">Enterprise & Services (5)</option>
+                <option value="Software & Solutions">Software & Solutions (6)</option>
+                <option value="Distribution & Retail">Distribution & Retail (3)</option>
+                <option value="Site & Power">Site & Power (4)</option>
+            </select>
+        </div>
+
+        <div class="filter-group">
+            <label for="subsidiaryFilter"><i class="fa-solid fa-building"></i> Affiliate:</label>
             <select id="subsidiaryFilter" class="filter-select">
                 <option value="0">All ITG Holding (18 Affiliates)</option>
             </select>
@@ -74,7 +85,9 @@
         </div>
 
         <div class="filter-group ml-auto">
-            <span class="badge badge-clean" id="tenantBadge"><i class="fa-solid fa-shield-halved"></i> Multi-Tenant RBAC Active</span>
+            <input type="file" id="csvImportInput" accept=".csv" style="display:none;" onchange="handleCsvFileImport(event)">
+            <button class="btn btn-sm btn-outline" onclick="document.getElementById('csvImportInput').click()" title="Bulk-import projects from CSV into central PMO database"><i class="fa-solid fa-file-import text-blue"></i> Import CSV</button>
+            <button class="btn btn-sm btn-outline" onclick="exportPortfolioToCsv()" title="Export full PMO portfolio database to Excel/CSV for CEO Board Pack"><i class="fa-solid fa-file-csv text-green"></i> Export Excel / CSV</button>
         </div>
     </section>
 
@@ -82,13 +95,13 @@
     <main class="main-content">
 
         <!-- ================================================================= -->
-        <!-- TAB 1: PORTFOLIO OVERVIEW DASHBOARD (CEO / GM LEVEL)             -->
+        <!-- TAB 1: PORTFOLIO OVERVIEW & SMART PMO HUB (CEO / GM LEVEL)        -->
         <!-- ================================================================= -->
         <section class="tab-pane active" id="tab-portfolio">
             <div class="section-header">
                 <div>
-                    <h2>Group Portfolio Overview</h2>
-                    <p class="section-desc">Consolidated leadership cockpit monitoring project health, budget consumption, and performance indices across all 15 subsidiaries.</p>
+                    <h2>Central PMO Hub &amp; Group Portfolio Cockpit</h2>
+                    <p class="section-desc">Institutional project database consolidating schedule velocity (Advanced, On-Track, Delayed), EVM indices, and smart PMO diagnostics across all 18 ITG Holding affiliates.</p>
                 </div>
                 <div class="header-badges">
                     <span class="kpi-pill"><i class="fa-solid fa-bullseye"></i> Target CPI: &ge; 0.95</span>
@@ -100,11 +113,11 @@
             <div class="stats-grid">
                 <div class="stat-card">
                     <div class="stat-header">
-                        <span class="stat-label">Active Portfolios</span>
+                        <span class="stat-label">Registered Projects</span>
                         <div class="stat-icon icon-blue"><i class="fa-solid fa-folder-open"></i></div>
                     </div>
                     <div class="stat-value" id="kpiTotalProjects">0</div>
-                    <div class="stat-footer" id="kpiPipelineCount">0 pipeline initiatives</div>
+                    <div class="stat-footer" id="kpiPipelineCount">0 Healthy, 0 At Risk, 0 Critical</div>
                 </div>
 
                 <div class="stat-card">
@@ -135,28 +148,76 @@
                 </div>
             </div>
 
-            <!-- Health Distribution & 30-Day Critical Milestones -->
+            <!-- CEO 3-Bucket Delivery Velocity Bar (Advanced vs. On Schedule vs. Delayed) -->
+            <div class="card mb-4" style="margin-bottom:1.25rem; border-left:4px solid var(--navy-blue);">
+                <div class="card-header d-flex justify-between align-center" style="padding:0.75rem 1.25rem;">
+                    <div>
+                        <h3 style="margin:0; font-size:0.95rem;"><i class="fa-solid fa-gauge-simple-high text-blue"></i> CEO Schedule Delivery Velocity Tracker (Click Any Bucket to Filter)</h3>
+                    </div>
+                    <div class="d-flex align-center gap-2">
+                        <span class="badge badge-clean" id="activeVelocityFilterBadge">Showing: All Schedule Buckets</span>
+                        <button type="button" class="btn btn-sm btn-outline" id="btnResetVelocityFilter" onclick="setScheduleVelocityFilter('All')" style="display:none;"><i class="fa-solid fa-filter-circle-xmark"></i> Show All</button>
+                    </div>
+                </div>
+                <div class="card-body" style="padding:0.9rem 1.25rem;">
+                    <div class="velocity-grid" style="display:grid; grid-template-columns:repeat(3, 1fr); gap:1rem;">
+                        <div class="velocity-card velocity-advanced" id="velCardADVANCED" onclick="setScheduleVelocityFilter('ADVANCED')" style="cursor:pointer; padding:0.85rem 1rem; border-radius:8px; border:2px solid #A7F3D0; background:#ECFDF5; transition:all 0.2s;">
+                            <div style="display:flex; justify-content:space-between; align-items:center;">
+                                <span style="font-size:0.78rem; font-weight:700; color:#065F46; text-transform:uppercase;"><i class="fa-solid fa-rocket"></i> Advanced / Ahead of Schedule</span>
+                                <span class="badge badge-green" id="velPctAdvanced">0%</span>
+                            </div>
+                            <div style="font-size:1.65rem; font-weight:800; color:#047857; margin:0.25rem 0;" id="velCountAdvanced">0</div>
+                            <div style="font-size:0.73rem; color:#065F46;">SPI &ge; 1.03 or Forecast Finish Ahead of Baseline</div>
+                        </div>
+
+                        <div class="velocity-card velocity-ontrack" id="velCardON_TRACK" onclick="setScheduleVelocityFilter('ON_TRACK')" style="cursor:pointer; padding:0.85rem 1rem; border-radius:8px; border:2px solid #BAE6FD; background:#F0F9FF; transition:all 0.2s;">
+                            <div style="display:flex; justify-content:space-between; align-items:center;">
+                                <span style="font-size:0.78rem; font-weight:700; color:#075985; text-transform:uppercase;"><i class="fa-solid fa-circle-check"></i> On Track (Baseline Pace)</span>
+                                <span class="badge badge-blue" id="velPctOnTrack">0%</span>
+                            </div>
+                            <div style="font-size:1.65rem; font-weight:800; color:#0369A1; margin:0.25rem 0;" id="velCountOnTrack">0</div>
+                            <div style="font-size:0.73rem; color:#075985;">0.95 &le; SPI &lt; 1.03 and 0 Days Baseline Slippage</div>
+                        </div>
+
+                        <div class="velocity-card velocity-delayed" id="velCardDELAYED" onclick="setScheduleVelocityFilter('DELAYED')" style="cursor:pointer; padding:0.85rem 1rem; border-radius:8px; border:2px solid #FECACA; background:#FEF2F2; transition:all 0.2s;">
+                            <div style="display:flex; justify-content:space-between; align-items:center;">
+                                <span style="font-size:0.78rem; font-weight:700; color:#991B1B; text-transform:uppercase;"><i class="fa-solid fa-clock-rotate-left"></i> Delayed / Slipping</span>
+                                <span class="badge badge-red" id="velPctDelayed">0%</span>
+                            </div>
+                            <div style="font-size:1.65rem; font-weight:800; color:#DC2626; margin:0.25rem 0;" id="velCountDelayed">0</div>
+                            <div style="font-size:0.73rem; color:#991B1B;">SPI &lt; 0.95 or Forecast Finish Exceeds Baseline</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 4 ITG Holding Business Clusters Executive Rollup Strip -->
+            <div class="stats-grid" id="clusterRollupGrid" style="margin-bottom:1.25rem;">
+                <!-- Populated dynamically with the 4 ITG Holding Clusters -->
+            </div>
+
+            <!-- Health Distribution & Smart PMO Intelligence Engine -->
             <div class="dashboard-grid-2">
                 <div class="card">
                     <div class="card-header">
                         <h3><i class="fa-solid fa-chart-column"></i> Subsidiary Portfolio Health Distribution</h3>
                     </div>
                     <div class="card-body">
-                        <div class="chart-container" style="height: 240px;">
+                        <div class="chart-container" style="height: 250px;">
                             <canvas id="subsidiaryHealthChart"></canvas>
                         </div>
                     </div>
                 </div>
 
                 <div class="card">
-                    <div class="card-header">
-                        <h3><i class="fa-solid fa-triangle-exclamation"></i> Critical 30-Day Executive Alerts</h3>
-                        <span class="badge badge-amber" id="alertCountBadge">0 Alerts</span>
+                    <div class="card-header d-flex justify-between align-center">
+                        <h3><i class="fa-solid fa-brain text-purple"></i> Smart PMO Diagnostic &amp; CEO Action Insights</h3>
+                        <span class="badge badge-amber" id="alertCountBadge">0 Insights</span>
                     </div>
-                    <div class="card-body" id="executiveAlertsList">
+                    <div class="card-body" id="executiveAlertsList" style="max-height:270px; overflow-y:auto;">
                         <div class="empty-state">
                             <i class="fa-solid fa-circle-check text-green"></i>
-                            <p>No critical slippages or cost overruns detected across active portfolios.</p>
+                            <p>No active portfolio diagnostics available.</p>
                         </div>
                     </div>
                 </div>
@@ -165,9 +226,9 @@
             <!-- Master Projects Table -->
             <div class="card mt-4">
                 <div class="card-header">
-                    <h3><i class="fa-solid fa-table-list"></i> Master Project Registry</h3>
-                    <div class="card-actions">
-                        <input type="text" id="projectSearchInput" class="search-input" placeholder="Search project, PM, or client...">
+                    <h3><i class="fa-solid fa-database text-blue"></i> Central PMO Project Database &amp; Live Status Ledger</h3>
+                    <div class="card-actions d-flex align-center gap-2">
+                        <input type="text" id="projectSearchInput" class="search-input" placeholder="Search code, affiliate, PM, or velocity...">
                     </div>
                 </div>
                 <div class="card-body p-0">
@@ -175,15 +236,16 @@
                         <table class="data-table" id="projectsTable">
                             <thead>
                                 <tr>
-                                    <th>Status</th>
-                                    <th>Project Code & Name</th>
-                                    <th>Subsidiary</th>
-                                    <th>Project Manager</th>
-                                    <th>Contract Model</th>
-                                    <th>BAC ($)</th>
-                                    <th>Actual Spend ($)</th>
+                                    <th>RAG</th>
+                                    <th>Project Code &amp; Name</th>
+                                    <th>Affiliate &amp; Cluster</th>
+                                    <th>PM</th>
+                                    <th>Lifecycle Status</th>
+                                    <th>Schedule Velocity</th>
+                                    <th>Revised BAC ($)</th>
+                                    <th>Actual (AC $)</th>
                                     <th>Progress %</th>
-                                    <th>CPI</th>
+                                    <th>CPI / TCPI</th>
                                     <th>SPI</th>
                                     <th>Forecast Finish</th>
                                     <th>Actions</th>
@@ -335,9 +397,15 @@
             <!-- Risk Register Table (Form 4 - Risk Log) -->
             <div class="card mt-4">
                 <div class="card-header d-flex justify-between align-center">
-                    <h3><i class="fa-solid fa-list-check"></i> Project Risk Register (Form 4 Log)</h3>
-                    <div class="table-search-box">
-                        <input type="text" id="riskSearchInput" placeholder="Filter by risk code, title, owner..." class="form-input" style="padding: 0.35rem 0.75rem; font-size: 0.8rem; width: 260px;" oninput="filterRisksTable()">
+                    <div>
+                        <h3><i class="fa-solid fa-list-check"></i> Project Risk Register (Form 4 Log)</h3>
+                        <p class="section-desc" style="margin:0; font-size:0.75rem;">Itemized qualitative & quantitative operational risk ledger with exposure formulas.</p>
+                    </div>
+                    <div class="d-flex align-center gap-2">
+                        <div class="table-search-box">
+                            <input type="text" id="riskSearchInput" placeholder="Filter by code, title, owner..." class="form-input" style="padding: 0.35rem 0.75rem; font-size: 0.8rem; width: 220px;" oninput="filterRisksTable()">
+                        </div>
+                        <button class="btn btn-sm btn-primary" id="btnOpenAddRiskModal" onclick="openAddRiskModal()"><i class="fa-solid fa-plus"></i> + Add Risk</button>
                     </div>
                 </div>
                 <div class="card-body p-0">
@@ -373,7 +441,10 @@
                         <h3><i class="fa-solid fa-code-pull-request"></i> Scope Change Requests (CR) Approval Log</h3>
                         <p class="section-desc" style="margin:0; font-size:0.75rem;">Holding PMO governance approval workflow for scope, budget & schedule variations.</p>
                     </div>
-                    <span class="badge badge-clean"><i class="fa-solid fa-gavel"></i> Baseline Change Control</span>
+                    <div class="d-flex align-center gap-2">
+                        <span class="badge badge-clean"><i class="fa-solid fa-gavel"></i> Baseline Change Control</span>
+                        <button class="btn btn-sm btn-secondary" id="btnOpenAddCRModal" onclick="openAddCRModal()"><i class="fa-solid fa-plus"></i> + Add Change Request</button>
+                    </div>
                 </div>
                 <div class="card-body p-0">
                     <div class="table-responsive">
@@ -403,20 +474,50 @@
 
 
         <!-- ================================================================= -->
-        <!-- TAB 3: TASK-CENTRIC EXECUTION KANBAN (TEAMS & DELIVERY)          -->
+        <!-- TAB 5: TASK-CENTRIC EXECUTION KANBAN & RESOURCE CAPACITY          -->
         <!-- ================================================================= -->
         <section class="tab-pane" id="tab-tasks">
             <div class="section-header">
                 <div>
-                    <h2>Task-Centric Execution & Delivery</h2>
-                    <p class="section-desc">Interactive WBS execution Kanban board tracking deliverable progress, blockers, defect density, and rework friction.</p>
+                    <h2>WBS Execution Kanban & Workforce Capacity</h2>
+                    <p class="section-desc">Bottom-up WBS deliverable workflow, Earned Value ($EV$) stage rollup, and Affiliate Engineering Resource Capacity across all 18 subsidiaries.</p>
+                </div>
+                <div class="filter-group">
+                    <label for="tasksProjectSelector">Filter by Project:</label>
+                    <select id="tasksProjectSelector" class="filter-select">
+                        <option value="0">All Active Projects</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- 4 Top Execution & Workforce Stat Cards -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-header"><span class="stat-label">WBS Deliverables</span><i class="fa-solid fa-list-check text-blue"></i></div>
+                    <div class="stat-value" id="taskTotalCount">0</div>
+                    <div class="stat-footer" id="taskCompletedSubtitle">0 completed deliverables</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-header"><span class="stat-label">Active & In-Review</span><i class="fa-solid fa-spinner text-emerald"></i></div>
+                    <div class="stat-value" id="taskInProgressCount">0</div>
+                    <div class="stat-footer">Currently in execution or QA</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-header"><span class="stat-label">Blocked Deliverables</span><i class="fa-solid fa-hand text-red"></i></div>
+                    <div class="stat-value" id="taskBlockedCount">0</div>
+                    <div class="stat-footer">Requiring PMO escalation</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-header"><span class="stat-label">Allocated Project FTEs</span><i class="fa-solid fa-users-gear text-purple"></i></div>
+                    <div class="stat-value" id="taskTotalFTE">0.0 FTE</div>
+                    <div class="stat-footer" id="taskUtilizationSubtitle">0.0% Group Capacity Utilization</div>
                 </div>
             </div>
 
             <div class="kanban-board">
                 <div class="kanban-column" data-status="Backlog">
                     <div class="kanban-header">
-                        <span><i class="fa-solid fa-layer-group"></i> Backlog</span>
+                        <span><i class="fa-solid fa-layer-group"></i> Backlog (0% EV)</span>
                         <span class="count-badge" id="count-Backlog">0</span>
                     </div>
                     <div class="kanban-cards" id="kanban-Backlog"></div>
@@ -424,7 +525,7 @@
 
                 <div class="kanban-column" data-status="In Progress">
                     <div class="kanban-header">
-                        <span><i class="fa-solid fa-spinner"></i> In Progress</span>
+                        <span><i class="fa-solid fa-spinner text-blue"></i> In Progress (50% EV)</span>
                         <span class="count-badge" id="count-In Progress">0</span>
                     </div>
                     <div class="kanban-cards" id="kanban-In Progress"></div>
@@ -432,7 +533,7 @@
 
                 <div class="kanban-column" data-status="In Review">
                     <div class="kanban-header">
-                        <span><i class="fa-solid fa-glasses"></i> In Review / QA</span>
+                        <span><i class="fa-solid fa-glasses text-amber"></i> In Review / QA (80% EV)</span>
                         <span class="count-badge" id="count-In Review">0</span>
                     </div>
                     <div class="kanban-cards" id="kanban-In Review"></div>
@@ -440,7 +541,7 @@
 
                 <div class="kanban-column" data-status="Blocked">
                     <div class="kanban-header text-red">
-                        <span><i class="fa-solid fa-hand text-red"></i> Blocked</span>
+                        <span><i class="fa-solid fa-hand text-red"></i> Blocked (25% EV)</span>
                         <span class="count-badge badge-red" id="count-Blocked">0</span>
                     </div>
                     <div class="kanban-cards" id="kanban-Blocked"></div>
@@ -448,22 +549,58 @@
 
                 <div class="kanban-column" data-status="Completed">
                     <div class="kanban-header text-green">
-                        <span><i class="fa-solid fa-check-circle text-green"></i> Completed</span>
+                        <span><i class="fa-solid fa-check-circle text-green"></i> Completed (100% EV)</span>
                         <span class="count-badge badge-green" id="count-Completed">0</span>
                     </div>
                     <div class="kanban-cards" id="kanban-Completed"></div>
                 </div>
             </div>
+
+            <!-- Affiliate Workforce Capacity & Resource Allocation Table -->
+            <div class="card mt-4">
+                <div class="card-header d-flex justify-between align-center">
+                    <div>
+                        <h3><i class="fa-solid fa-building-user"></i> Affiliate Engineering Capacity & Resource Utilization Ledger (KPI #24)</h3>
+                        <p class="section-desc" style="margin:0; font-size:0.75rem;">Real-time comparison of affiliate engineering headcount vs. committed project FTEs across ITG Holding.</p>
+                    </div>
+                    <span class="badge badge-clean" id="demandSummaryBadge">18 Affiliates Tracked</span>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="data-table" id="demandCapacityTable">
+                            <thead>
+                                <tr>
+                                    <th>Affiliate Code & Name</th>
+                                    <th>Corporate Cluster</th>
+                                    <th>Active Projects</th>
+                                    <th>Total Headcount (FTE)</th>
+                                    <th>Committed FTEs</th>
+                                    <th>Available Reserve (FTE)</th>
+                                    <th>Capacity Utilization %</th>
+                                    <th>Capacity Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="demandCapacityTableBody">
+                                <!-- Populated dynamically -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
         </section>
 
         <!-- ================================================================= -->
-        <!-- TAB 4: FINANCIAL PROJECT DASHBOARD (CEO & CFO)                   -->
+        <!-- TAB 2: FINANCIAL PROJECT & COMMERCIAL PROFITABILITY (CEO & CFO)   -->
         <!-- ================================================================= -->
         <section class="tab-pane" id="tab-financials">
             <div class="section-header">
                 <div>
-                    <h2>Financial Project & Profitability Dashboard</h2>
-                    <p class="section-desc">Executive commercial governance tracking earned value, cost indices, and contract margins across Fixed-Price and T&M portfolios.</p>
+                    <h2>Commercial Profitability & EVM Financial Cockpit</h2>
+                    <p class="section-desc">CFO commercial governance tracking Contract Value, Approved CR Baseline Expansion, Revised BAC, Forecast EAC/ETC/VAC, and Gross Margins across all contract models.</p>
+                </div>
+                <div class="header-badges">
+                    <span class="kpi-pill"><i class="fa-solid fa-calculator"></i> Revised BAC = Orig. BAC + Approved CRs</span>
+                    <span class="kpi-pill"><i class="fa-solid fa-Percent"></i> Forecast Margin = Contract &minus; EAC</span>
                 </div>
             </div>
 
@@ -471,32 +608,32 @@
                 <div class="stat-card">
                     <div class="stat-header"><span class="stat-label">Total Contract Value</span><i class="fa-solid fa-file-contract text-blue"></i></div>
                     <div class="stat-value" id="finTotalContract">$0.00</div>
-                    <div class="stat-footer">Gross contractual commitments</div>
+                    <div class="stat-footer" id="finRevisedBACSubtitle">Revised BAC: $0.00 (Incl. $0.00 CRs)</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-header"><span class="stat-label">Earned Value (EV)</span><i class="fa-solid fa-trophy text-emerald"></i></div>
+                    <div class="stat-header"><span class="stat-label">Forecast Gross Margin</span><i class="fa-solid fa-sack-dollar text-emerald"></i></div>
+                    <div class="stat-value" id="finForecastMargin">$0.00 (0.0%)</div>
+                    <div class="stat-footer" id="finPlannedMarginSubtitle">Planned Margin: $0.00 (0.0%)</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-header"><span class="stat-label">Earned Value vs. Actual Cost</span><i class="fa-solid fa-money-bill-transfer text-amber"></i></div>
                     <div class="stat-value" id="finTotalEV">$0.00</div>
-                    <div class="stat-footer">Physical value of work delivered</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-header"><span class="stat-label">Actual Cost (AC)</span><i class="fa-solid fa-money-bill-transfer text-amber"></i></div>
-                    <div class="stat-value" id="finTotalAC">$0.00</div>
-                    <div class="stat-footer">Actual expenditures to date</div>
+                    <div class="stat-footer" id="finTotalAC">Actual Spend (AC): $0.00 | CPI: 1.00</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-header"><span class="stat-label">Projected Net VAC</span><i class="fa-solid fa-scale-balanced text-purple"></i></div>
                     <div class="stat-value" id="finNetVAC">$0.00</div>
-                    <div class="stat-footer" id="finVACSubtitle">BAC - EAC across active scope</div>
+                    <div class="stat-footer" id="finVACSubtitle">Total EAC: $0.00 | ETC: $0.00</div>
                 </div>
             </div>
 
             <div class="dashboard-grid-2 mt-4">
                 <div class="card">
                     <div class="card-header">
-                        <h3><i class="fa-solid fa-chart-pie"></i> Profitability by Contract Model</h3>
+                        <h3><i class="fa-solid fa-chart-pie"></i> Portfolio Mix by Contract Model</h3>
                     </div>
                     <div class="card-body">
-                        <div class="chart-container" style="height: 250px;">
+                        <div class="chart-container" style="height: 240px;">
                             <canvas id="contractModelChart"></canvas>
                         </div>
                     </div>
@@ -504,46 +641,92 @@
 
                 <div class="card">
                     <div class="card-header">
-                        <h3><i class="fa-solid fa-table"></i> Fixed-Price Contract Margin Performance</h3>
+                        <h3><i class="fa-solid fa-chart-bar"></i> Commercial Contract Value vs. Revised BAC & Forecast EAC</h3>
                     </div>
-                    <div class="card-body p-0">
-                        <div class="table-responsive">
-                            <table class="data-table" id="finFixedPriceTable">
-                                <thead>
-                                    <tr>
-                                        <th>Project</th>
-                                        <th>Contract ($)</th>
-                                        <th>BAC ($)</th>
-                                        <th>AC ($)</th>
-                                        <th>EV ($)</th>
-                                        <th>CPI</th>
-                                        <th>Margin Health</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="finFixedPriceTableBody">
-                                    <!-- Populated dynamically -->
-                                </tbody>
-                            </table>
+                    <div class="card-body">
+                        <div class="chart-container" style="height: 240px;">
+                            <canvas id="financialsComparisonChart"></canvas>
                         </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card mt-4">
+                <div class="card-header d-flex justify-between align-center">
+                    <div>
+                        <h3><i class="fa-solid fa-table"></i> Enterprise Commercial & EVM Profitability Ledger (All Contract Models)</h3>
+                        <p class="section-desc" style="margin:0; font-size:0.75rem;">Complete project-by-project accounting of Original Baseline, Approved Change Requests, Forecast EAC/ETC/VAC, and Gross Commercial Margin.</p>
+                    </div>
+                    <span class="badge badge-clean" id="finProjectCountBadge">0 Projects</span>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="data-table" id="finFixedPriceTable">
+                            <thead>
+                                <tr>
+                                    <th>Project</th>
+                                    <th>Affiliate & Model</th>
+                                    <th>Contract ($)</th>
+                                    <th>Orig. BAC ($)</th>
+                                    <th>Approved CRs ($)</th>
+                                    <th>Revised BAC ($)</th>
+                                    <th>Actual (AC $)</th>
+                                    <th>Earned (EV $)</th>
+                                    <th>CPI</th>
+                                    <th>Forecast EAC ($)</th>
+                                    <th>ETC ($)</th>
+                                    <th>VAC ($)</th>
+                                    <th>Forecast Margin</th>
+                                    <th>Commercial Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="finFixedPriceTableBody">
+                                <!-- Populated dynamically -->
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </div>
         </section>
 
         <!-- ================================================================= -->
-        <!-- TAB 5: BUDGET VS. ACTUAL & S-CURVE (CONTROLLER VIEW)             -->
+        <!-- TAB 3: BUDGET VS. ACTUAL & S-CURVE (CONTROLLER VIEW)             -->
         <!-- ================================================================= -->
         <section class="tab-pane" id="tab-scurve">
             <div class="section-header">
                 <div>
-                    <h2>Budget vs. Actual (Cumulative S-Curve)</h2>
-                    <p class="section-desc">Deterministic EVM trend analysis tracking cumulative Planned Value (PV), Earned Value (EV), and Actual Cost (AC) over time.</p>
+                    <h2>Budget vs. Actual (Cumulative S-Curve & Cut-Off Ledger)</h2>
+                    <p class="section-desc">Deterministic EVM trend analysis tracking cumulative Planned Value (PV), Earned Value (EV), and Actual Cost (AC) across periodic Form 3 cut-offs.</p>
                 </div>
                 <div class="filter-group">
                     <label for="scurveProjectSelector">Select Project Scope:</label>
                     <select id="scurveProjectSelector" class="filter-select">
                         <option value="0">Consolidated ITG Portfolio S-Curve</option>
                     </select>
+                </div>
+            </div>
+
+            <!-- 4 Top EVM Controller Stat Cards -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-header"><span class="stat-label">Latest Planned Value (PV)</span><i class="fa-solid fa-calendar-check text-blue"></i></div>
+                    <div class="stat-value" id="scurveStatPV">$0.00</div>
+                    <div class="stat-footer" id="scurveStatPVSub">Baseline scheduled work value</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-header"><span class="stat-label">Latest Earned Value (EV)</span><i class="fa-solid fa-trophy text-emerald"></i></div>
+                    <div class="stat-value" id="scurveStatEV">$0.00</div>
+                    <div class="stat-footer" id="scurveStatEVSub">Physical work accomplished</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-header"><span class="stat-label">Latest Actual Cost (AC)</span><i class="fa-solid fa-coins text-amber"></i></div>
+                    <div class="stat-value" id="scurveStatAC">$0.00</div>
+                    <div class="stat-footer" id="scurveStatACSub">Cumulative actual expenditure</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-header"><span class="stat-label">Latest CV / SV Variances</span><i class="fa-solid fa-scale-unbalanced text-purple"></i></div>
+                    <div class="stat-value" id="scurveStatVariances">$0.00 / $0.00</div>
+                    <div class="stat-footer" id="scurveStatIndicesSub">CPI: 1.00 | SPI: 1.00</div>
                 </div>
             </div>
 
@@ -569,16 +752,76 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Historical Periodic Cut-Off Snapshots Ledger (Form 3 Log) -->
+            <div class="card mt-4">
+                <div class="card-header d-flex justify-between align-center">
+                    <div>
+                        <h3 id="scurveTableTitle"><i class="fa-solid fa-clock-rotate-left"></i> Historical Periodic Cut-Off Snapshots Ledger (Form 3 Log)</h3>
+                        <p class="section-desc" style="margin:0; font-size:0.75rem;">Chronological audit history of submitted monthly cadences, cost variances, effort hours, and PM explanations.</p>
+                    </div>
+                    <span class="badge badge-clean" id="scurveSnapshotCount">0 Snapshots</span>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="data-table" id="scurveHistoryTable">
+                            <thead>
+                                <tr>
+                                    <th>Cut-Off Date</th>
+                                    <th>Planned (PV)</th>
+                                    <th>Earned (EV)</th>
+                                    <th>Actual (AC)</th>
+                                    <th>Cost Var (CV)</th>
+                                    <th>Sched Var (SV)</th>
+                                    <th>CPI</th>
+                                    <th>SPI</th>
+                                    <th>Effort (Hrs)</th>
+                                    <th>Defects</th>
+                                    <th>Progress %</th>
+                                    <th>PM Monthly Narrative</th>
+                                </tr>
+                            </thead>
+                            <tbody id="scurveHistoryTableBody">
+                                <!-- Populated dynamically by loadScurveDashboard -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
         </section>
 
         <!-- ================================================================= -->
-        <!-- TAB 6: PROJECT TIMELINE & MILESTONES (STEERING COMMITTEE)        -->
+        <!-- TAB 4: PROJECT TIMELINE & MILESTONES (STEERING COMMITTEE)        -->
         <!-- ================================================================= -->
         <section class="tab-pane" id="tab-timeline">
             <div class="section-header">
                 <div>
-                    <h2>Project Timeline & Milestones Roadmap</h2>
-                    <p class="section-desc">Chronological deliverable roadmap, critical path dependency tracking, and automated milestone slippage containment.</p>
+                    <h2>Project Timeline, Gantt Progress & Milestones Roadmap</h2>
+                    <p class="section-desc">Chronological WBS deliverable roadmap, visual timeline execution bars, critical path dependency tracking, and automated milestone slippage containment.</p>
+                </div>
+            </div>
+
+            <!-- 4 Top Timeline & Schedule Governance Stat Cards -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-header"><span class="stat-label">Registered WBS Items</span><i class="fa-solid fa-diagram-project text-blue"></i></div>
+                    <div class="stat-value" id="timeTotalItems">0</div>
+                    <div class="stat-footer" id="timeCompletedSub">0 completed milestones & tasks</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-header"><span class="stat-label">Milestone Achievement %</span><i class="fa-solid fa-flag-checkered text-emerald"></i></div>
+                    <div class="stat-value" id="timeAchievementPct">0.0%</div>
+                    <div class="stat-footer">KPI #6 Schedule Reliability</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-header"><span class="stat-label">Delayed Projects</span><i class="fa-solid fa-clock-rotate-left text-amber"></i></div>
+                    <div class="stat-value" id="timeDelayedCount">0</div>
+                    <div class="stat-footer">Forecast finish &gt; Revised Baseline</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-header"><span class="stat-label">Max Schedule Slippage</span><i class="fa-solid fa-bell text-red"></i></div>
+                    <div class="stat-value" id="timeMaxSlippage">0 days</div>
+                    <div class="stat-footer">KPI #7 Worst-Case Project Delay</div>
                 </div>
             </div>
 
@@ -586,25 +829,30 @@
             <div class="alert-banner" id="slippageBanner" style="display: none;">
                 <div class="alert-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
                 <div class="alert-content">
-                    <h4 id="slippageTitle">Milestone Slippage Red-Flag Alert (>30 Days Delayed)</h4>
+                    <h4 id="slippageTitle">Milestone Slippage Red-Flag Alert (&gt;30 Days Delayed)</h4>
                     <p id="slippageDesc">The following critical milestones require immediate steering committee intervention.</p>
                 </div>
             </div>
 
             <div class="card mt-4">
-                <div class="card-header">
-                    <h3><i class="fa-solid fa-timeline"></i> Critical Path Milestone Deliverables</h3>
+                <div class="card-header d-flex justify-between align-center">
+                    <div>
+                        <h3><i class="fa-solid fa-timeline"></i> WBS Schedule Roadmap & Visual Gantt Progress</h3>
+                        <p class="section-desc" style="margin:0; font-size:0.75rem;">Baseline Start/Finish window, Earned Value weight, visual execution progress bar, and Critical Path lock status.</p>
+                    </div>
+                    <span class="badge badge-clean" id="timelineCountBadge">0 Deliverables</span>
                 </div>
                 <div class="card-body p-0">
                     <div class="table-responsive">
                         <table class="data-table" id="timelineMilestonesTable">
                             <thead>
                                 <tr>
-                                    <th>Project</th>
+                                    <th>Project & Affiliate</th>
                                     <th>Milestone / Work Package</th>
-                                    <th>Weight %</th>
-                                    <th>Planned Start</th>
-                                    <th>Planned Finish</th>
+                                    <th>Type</th>
+                                    <th>Weight & EV ($)</th>
+                                    <th>Planned Start &rarr; Finish</th>
+                                    <th>Visual Schedule Progress</th>
                                     <th>Status</th>
                                     <th>Critical Path</th>
                                 </tr>
@@ -781,7 +1029,10 @@
                     <!-- Section 2: Core Earned Value Metrics (EVM Standard) -->
                     <div class="section-title-row">
                         <h4><i class="fa-solid fa-calculator"></i> 2. Cumulative Earned Value Metrics (Standard EVM Inputs)</h4>
-                        <span class="badge badge-clean">Cumulative $ Through Cut-Off</span>
+                        <div class="d-flex align-center gap-2">
+                            <button type="button" class="btn btn-sm btn-outline" id="btnAutoFillWbsEv" onclick="autoFillEvFromWbs()" title="Automatically compute time-phased Planned Value (PV $), WBS Kanban Earned Value (EV $), Progress %, and SPI-projected Forecast Finish Date"><i class="fa-solid fa-wand-magic-sparkles text-blue"></i> Smart Auto-Compute PV, EV & Forecast Date</button>
+                            <span class="badge badge-clean">Cumulative $ Through Cut-Off</span>
+                        </div>
                     </div>
                     <div class="form-grid-4">
                         <div class="form-group">
@@ -812,15 +1063,15 @@
                     <div class="form-grid-3">
                         <div class="form-group">
                             <label>Actual Effort Incurred (Hours)</label>
-                            <input type="number" id="c_effort" class="form-control" value="160" min="0" step="1">
+                            <input type="number" id="c_effort" class="form-control" placeholder="e.g. 160" min="0" step="1">
                         </div>
                         <div class="form-group">
                             <label>Available Resource Hours</label>
-                            <input type="number" id="c_available_hours" class="form-control" value="160" min="0" step="1">
+                            <input type="number" id="c_available_hours" class="form-control" placeholder="e.g. 160" min="0" step="1">
                         </div>
                         <div class="form-group">
                             <label>Rework Friction Effort (Hours)</label>
-                            <input type="number" id="c_rework" class="form-control" value="0" min="0" step="1">
+                            <input type="number" id="c_rework" class="form-control" placeholder="e.g. 0" min="0" step="1">
                         </div>
                     </div>
 
@@ -834,15 +1085,15 @@
                     <div class="form-grid-3">
                         <div class="form-group">
                             <label>Deliverables Submitted (Period)</label>
-                            <input type="number" id="c_deliverables_submitted" class="form-control" value="0" min="0">
+                            <input type="number" id="c_deliverables_submitted" class="form-control" placeholder="e.g. 0" min="0">
                         </div>
                         <div class="form-group">
                             <label>Deliverables Accepted First-Time</label>
-                            <input type="number" id="c_deliverables_accepted" class="form-control" value="0" min="0">
+                            <input type="number" id="c_deliverables_accepted" class="form-control" placeholder="e.g. 0" min="0">
                         </div>
                         <div class="form-group">
                             <label>Defects Identified Count</label>
-                            <input type="number" id="c_defects" class="form-control" value="0" min="0">
+                            <input type="number" id="c_defects" class="form-control" placeholder="e.g. 0" min="0">
                         </div>
                     </div>
 
@@ -856,7 +1107,7 @@
 
                     <!-- Live Real-Time Calculation Preview Box -->
                     <div class="kpi-preview-box" id="kpiPreviewBox">
-                        <div class="kpi-preview-title"><i class="fa-solid fa-calculator"></i> Real-Time 25-KPI Calculation Preview:</div>
+                        <div class="kpi-preview-title"><i class="fa-solid fa-calculator"></i> Real-Time Core EVM Status Preview:</div>
                         <div class="kpi-preview-grid">
                             <div><strong>CPI:</strong> <span id="prevCPI">-</span></div>
                             <div><strong>SPI:</strong> <span id="prevSPI">-</span></div>
@@ -890,9 +1141,152 @@
         </div>
     </div>
 
+    <!-- ===================================================================== -->
+    <!-- MODAL 4: ADD PROJECT RISK (FORM 4 GOVERNANCE)                         -->
+    <!-- ===================================================================== -->
+    <div class="modal-overlay" id="modalAddRisk">
+        <div class="modal-card">
+            <div class="modal-header">
+                <div>
+                    <h3><i class="fa-solid fa-triangle-exclamation text-amber"></i> Log Project Risk (Form 4 Governance)</h3>
+                    <p class="modal-subtitle">Register operational risk, calculate P &times; I severity, and plot directly on 5&times;5 Heatmap.</p>
+                </div>
+                <button class="modal-close" onclick="closeAddRiskModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="formAddRisk" onsubmit="saveNewRisk(event)">
+                    <div class="form-group">
+                        <label for="risk_project_id">Target Project <span class="text-danger">*</span></label>
+                        <select id="risk_project_id" class="form-control" required>
+                            <!-- Dynamically populated with active projects -->
+                        </select>
+                    </div>
+
+                    <div class="form-grid-2">
+                        <div class="form-group">
+                            <label for="risk_code">Risk Code <span class="text-danger">*</span></label>
+                            <input type="text" id="risk_code" class="form-control" placeholder="e.g. RSK-008" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="risk_owner">Risk Owner / Lead <span class="text-danger">*</span></label>
+                            <input type="text" id="risk_owner" class="form-control" placeholder="e.g. Lead Architect, PM" required>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="risk_desc">Risk Description & Threat Condition <span class="text-danger">*</span></label>
+                        <textarea id="risk_desc" class="form-control" rows="2" placeholder="Describe the threat (e.g. Database schema conflict or API integration latency)..." required></textarea>
+                    </div>
+
+                    <div class="form-grid-2">
+                        <div class="form-group">
+                            <label for="risk_prob">Probability (P) <span class="text-danger">*</span></label>
+                            <select id="risk_prob" class="form-control" required onchange="calculateRiskExposurePreview()">
+                                <option value="1">1 - Rare (20% Likelihood)</option>
+                                <option value="2">2 - Unlikely (40% Likelihood)</option>
+                                <option value="3" selected>3 - Possible (60% Likelihood)</option>
+                                <option value="4">4 - Likely (80% Likelihood)</option>
+                                <option value="5">5 - Almost Certain (100% Likelihood)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="risk_impact">Financial Impact ($) <span class="text-danger">*</span></label>
+                            <input type="number" id="risk_impact" class="form-control" placeholder="e.g. 35000" min="0" step="500" required oninput="calculateRiskExposurePreview()">
+                        </div>
+                    </div>
+
+                    <!-- Real-Time Exposure & Severity Preview Box -->
+                    <div class="kpi-preview-box mt-3" style="background:#F8FAFC; border:1px solid #CBD5E1; border-radius:6px; padding:0.75rem;">
+                        <div class="d-flex justify-between align-center">
+                            <div>
+                                <small class="text-muted" style="display:block; font-size:0.75rem;">Calculated Severity (P &times; I):</small>
+                                <strong id="riskPrevSeverity" style="font-size:1.05rem; color:var(--navy-blue);">-</strong>
+                            </div>
+                            <div style="text-align:right;">
+                                <small class="text-muted" style="display:block; font-size:0.75rem;">Expected Monetary Value (EMV):</small>
+                                <strong id="riskPrevExposure" class="text-amber" style="font-size:1.05rem;">$0.00</strong>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="modal-footer mt-4">
+                        <button type="button" class="btn btn-outline" onclick="closeAddRiskModal()">Cancel</button>
+                        <button type="submit" class="btn btn-primary"><i class="fa-solid fa-floppy-disk"></i> Save Risk to Register</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===================================================================== -->
+    <!-- MODAL 5: ADD CHANGE REQUEST (FORM 4 GOVERNANCE)                       -->
+    <!-- ===================================================================== -->
+    <div class="modal-overlay" id="modalAddCR">
+        <div class="modal-card">
+            <div class="modal-header">
+                <div>
+                    <h3><i class="fa-solid fa-code-pull-request text-purple"></i> Submit Change Request (Form 4 Governance)</h3>
+                    <p class="modal-subtitle">Log client-requested scope expansion, budget addition, and authorized schedule extension.</p>
+                </div>
+                <button class="modal-close" onclick="closeAddCRModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="formAddCR" onsubmit="saveNewChangeRequest(event)">
+                    <div class="form-group">
+                        <label for="cr_project_id">Target Project <span class="text-danger">*</span></label>
+                        <select id="cr_project_id" class="form-control" required>
+                            <!-- Dynamically populated with active projects -->
+                        </select>
+                    </div>
+
+                    <div class="form-grid-2">
+                        <div class="form-group">
+                            <label for="cr_code">CR Reference Code <span class="text-danger">*</span></label>
+                            <input type="text" id="cr_code" class="form-control" placeholder="e.g. CR-005" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="cr_requested_by">Requested By <span class="text-danger">*</span></label>
+                            <input type="text" id="cr_requested_by" class="form-control" placeholder="e.g. Client Project Director" required>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="cr_desc">Scope Change Description <span class="text-danger">*</span></label>
+                        <textarea id="cr_desc" class="form-control" rows="2" placeholder="Specify added functional modules, API integrations, or revised requirements..." required></textarea>
+                    </div>
+
+                    <div class="form-grid-2">
+                        <div class="form-group">
+                            <label for="cr_cost_impact">Cost Impact ($) <span class="text-danger">*</span></label>
+                            <input type="number" id="cr_cost_impact" class="form-control" placeholder="e.g. 15000" min="0" step="500" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="cr_schedule_impact">Schedule Impact (Calendar Days)</label>
+                            <input type="number" id="cr_schedule_impact" class="form-control" placeholder="e.g. 14" min="0" step="1">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="cr_status">Initial Governance Status</label>
+                        <select id="cr_status" class="form-control">
+                            <option value="Pending" selected>Pending (Under PMO Review)</option>
+                            <option value="Approved">Approved (Authorized Baseline Expansion)</option>
+                            <option value="Rejected">Rejected</option>
+                        </select>
+                    </div>
+
+                    <div class="modal-footer mt-4">
+                        <button type="button" class="btn btn-outline" onclick="closeAddCRModal()">Cancel</button>
+                        <button type="submit" class="btn btn-secondary"><i class="fa-solid fa-cloud-arrow-up"></i> Submit Change Request</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <!-- Toast Notification Container -->
     <div class="toast-container" id="toastContainer"></div>
 
-    <script src="/static/js/app.js?v=2.6"></script>
+    <script src="/static/js/app.js?v=3.8"></script>
 </body>
 </html>

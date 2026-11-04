@@ -18,12 +18,44 @@ def compute_project_kpis(
     planned_effort = float(project.get("planned_effort_hours") or 1.0)
     planned_fte = float(project.get("planned_fte") or 1.0)
 
-    # Defaults from snapshot
+    # Approved Change Requests (Form 4 Governance -> Baseline Expansion)
+    approved_cr_cost = round(sum(float(c.get("cost_impact") or 0.0) for c in (change_requests or []) if c.get("status") == "Approved"), 2)
+    approved_cr_days = sum(int(c.get("schedule_impact_days") or 0) for c in (change_requests or []) if c.get("status") == "Approved")
+    revised_bac = round(bac + approved_cr_cost, 2)
+    effective_bac = revised_bac if revised_bac > 0 else bac
+
+    # Revised Baseline End Date (Original Baseline End + Approved CR Schedule Days)
+    b_end = project.get("baseline_end_date")
+    revised_b_end = b_end
+    if b_end and approved_cr_days != 0:
+        try:
+            revised_b_end = (datetime.date.fromisoformat(b_end) + datetime.timedelta(days=approved_cr_days)).isoformat()
+        except Exception:
+            revised_b_end = b_end
+
+    # Bottom-Up WBS Weighted Progress % (Kanban Stage Credit: Completed=100%, In Review=80%, In Progress=50%, Blocked=25%)
+    wbs_progress_pct = 0.0
+    if wbs_items and len(wbs_items) > 0:
+        total_w = sum(float(i.get("weight_pct") or 0.0) for i in wbs_items)
+        if total_w > 0:
+            stage_weights = {"Completed": 1.0, "In Review": 0.8, "In Progress": 0.5, "Blocked": 0.25, "Backlog": 0.0}
+            earned_w = 0.0
+            for i in wbs_items:
+                w = float(i.get("weight_pct") or 0.0)
+                if int(i.get("is_completed") or 0) == 1 or i.get("status") == "Completed":
+                    earned_w += w * 1.0
+                else:
+                    earned_w += w * stage_weights.get(i.get("status") or "Backlog", 0.0)
+            wbs_progress_pct = round((earned_w / total_w) * 100.0, 1)
+
+    wbs_earned_value = round((wbs_progress_pct / 100.0) * effective_bac, 2)
+
+    # Defaults from snapshot (or automatic bottom-up WBS rollup when no snapshot is filed yet)
     if latest_snapshot:
         pv = float(latest_snapshot.get("pv") or 0.0)
         ev = float(latest_snapshot.get("ev") or 0.0)
         ac = float(latest_snapshot.get("ac") or 0.0)
-        forecast_finish = latest_snapshot.get("forecast_completion_date") or project.get("baseline_end_date")
+        forecast_finish = latest_snapshot.get("forecast_completion_date") or revised_b_end
         actual_effort = float(latest_snapshot.get("actual_effort_hours") or 0.0)
         rework_effort = float(latest_snapshot.get("rework_effort_hours") or 0.0)
         avail_hours = float(latest_snapshot.get("available_hours") or (planned_fte * 160.0))
@@ -32,31 +64,29 @@ def compute_project_kpis(
         defects = int(latest_snapshot.get("defects_count") or 0)
         reported_progress = float(latest_snapshot.get("overall_progress_pct") or 0.0)
     else:
-        pv = 0.0
-        ev = 0.0
+        pv = wbs_earned_value
+        ev = wbs_earned_value
         ac = 0.0
-        forecast_finish = project.get("baseline_end_date")
+        forecast_finish = revised_b_end
         actual_effort = 0.0
         rework_effort = 0.0
         avail_hours = planned_fte * 160.0
         deliv_sub = 0
         deliv_acc = 0
         defects = 0
-        reported_progress = 0.0
+        reported_progress = wbs_progress_pct
 
     # 1. Overall Progress %
     # Formula: (Completed Weighted Work / Total Weighted Work) * 100
     if wbs_items and len(wbs_items) > 0:
-        total_w = sum(float(i.get("weight_pct") or 0.0) for i in wbs_items)
-        comp_w = sum(float(i.get("weight_pct") or 0.0) for i in wbs_items if int(i.get("is_completed") or 0) == 1)
-        calc_progress = (comp_w / total_w * 100.0) if total_w > 0 else 0.0
+        calc_progress = max(wbs_progress_pct, reported_progress) if latest_snapshot else wbs_progress_pct
     else:
-        calc_progress = (ev / bac * 100.0) if bac > 0 else reported_progress
+        calc_progress = (ev / effective_bac * 100.0) if effective_bac > 0 else reported_progress
 
-    overall_progress_pct = round(calc_progress, 1)
+    overall_progress_pct = round(min(100.0, calc_progress), 1)
 
-    # Planned progress estimate based on PV/BAC
-    planned_progress_pct = round((pv / bac * 100.0) if bac > 0 else 0.0, 1)
+    # Planned progress estimate based on PV / Effective BAC
+    planned_progress_pct = round((pv / effective_bac * 100.0) if effective_bac > 0 else 0.0, 1)
 
     # 2. Progress Variance %
     # Formula: Actual Progress % - Planned Progress %
@@ -74,7 +104,14 @@ def compute_project_kpis(
 
     # 4. Schedule Variance %
     # Formula: ((EV - PV) / PV) * 100
+    # RAG Rule: Within ±5% (>= -5%) -> GREEN | 5% to 10% adverse (-10% to -5%) -> AMBER | >10% adverse (< -10%) -> RED
     sv_pct = round(((ev - pv) / pv * 100.0) if pv > 0 else 0.0, 1)
+    if sv_pct >= -5.0:
+        rag_sv_pct = "GREEN"
+    elif sv_pct >= -10.0:
+        rag_sv_pct = "AMBER"
+    else:
+        rag_sv_pct = "RED"
 
     # 5. SPI (Schedule Performance Index)
     # Formula: EV / PV
@@ -106,12 +143,11 @@ def compute_project_kpis(
         rag_milestone = "RED"
 
     # 7. Schedule Delay (Days)
-    # Formula: Forecast Finish Date - Baseline Finish Date
+    # Formula: Forecast Finish Date - Revised Baseline Finish Date
     delay_days = 0
-    b_end = project.get("baseline_end_date")
-    if b_end and forecast_finish:
+    if revised_b_end and forecast_finish:
         try:
-            d_base = datetime.date.fromisoformat(b_end)
+            d_base = datetime.date.fromisoformat(revised_b_end)
             d_fcst = datetime.date.fromisoformat(forecast_finish)
             delay_days = (d_fcst - d_base).days
         except Exception:
@@ -130,7 +166,14 @@ def compute_project_kpis(
 
     # 9. Cost Variance %
     # Formula: ((EV - AC) / EV) * 100
+    # RAG Rule: Within ±5% (>= -5%) -> GREEN | 5% to 10% adverse (-10% to -5%) -> AMBER | >10% adverse (< -10%) -> RED
     cv_pct = round(((ev - ac) / ev * 100.0) if ev > 0 else 0.0, 1)
+    if cv_pct >= -5.0:
+        rag_cv_pct = "GREEN"
+    elif cv_pct >= -10.0:
+        rag_cv_pct = "AMBER"
+    else:
+        rag_cv_pct = "RED"
 
     # 10. CPI (Cost Performance Index)
     # Formula: EV / AC
@@ -143,8 +186,8 @@ def compute_project_kpis(
         rag_cpi = "RED"
 
     # 11. Budget Consumed %
-    # Formula: (AC / BAC) * 100
-    budget_consumed_pct = round((ac / bac * 100.0) if bac > 0 else 0.0, 1)
+    # Formula: (AC / Revised BAC) * 100
+    budget_consumed_pct = round((ac / effective_bac * 100.0) if effective_bac > 0 else 0.0, 1)
     # Alert if %Spend > %Progress + 15%
     if budget_consumed_pct > (overall_progress_pct + 15.0):
         rag_budget_pace = "RED"
@@ -154,22 +197,28 @@ def compute_project_kpis(
         rag_budget_pace = "GREEN"
 
     # 12. Estimate at Completion (EAC)
-    # Formula: BAC / CPI
-    eac = round((bac / cpi) if cpi > 0 else bac, 2)
+    # Formula: Revised BAC / CPI
+    eac = round((effective_bac / cpi) if cpi > 0 else effective_bac, 2)
 
     # 13. Estimate to Complete (ETC)
     # Formula: EAC - AC
     etc = round(max(0.0, eac - ac), 2)
 
     # 14. Variance at Completion (VAC)
-    # Formula: BAC - EAC
-    vac = round(bac - eac, 2)
+    # Formula: Revised BAC - EAC
+    vac = round(effective_bac - eac, 2)
     if vac >= 0:
         rag_vac = "GREEN"
     elif abs(vac) <= contingency:
         rag_vac = "AMBER" # Absorbable by contingency
     else:
         rag_vac = "RED"   # Overrun exceeds reserve!
+
+    # Commercial Gross Margin Analysis (CFO Cockpit)
+    planned_margin = round(contract_val - effective_bac, 2)
+    planned_margin_pct = round((planned_margin / contract_val * 100.0) if contract_val > 0 else 0.0, 1)
+    forecast_margin = round(contract_val - eac, 2)
+    forecast_margin_pct = round((forecast_margin / contract_val * 100.0) if contract_val > 0 else 0.0, 1)
 
     # 15. Forecast Accuracy %
     eac_accuracy_pct = round(max(0.0, (1.0 - (abs(eac - (ac + etc)) / eac if eac > 0 else 0.0))) * 100.0, 1)
@@ -253,10 +302,64 @@ def compute_project_kpis(
     else:
         overall_rag = "GREEN"
 
+    # Smart PMO Hub: 3-Bucket Schedule Velocity Classification (Delayed vs. On-Track vs. Advanced)
+    if delay_days > 0 or spi < 0.95 or sv_pct < -5.0:
+        schedule_bucket = "DELAYED"
+        schedule_label = f"{delay_days}d Delayed" if delay_days > 0 else f"SPI {spi:.2f} (Lag)"
+    elif delay_days < 0 or spi >= 1.03 or sv_pct >= 3.0:
+        schedule_bucket = "ADVANCED"
+        schedule_label = f"{abs(delay_days)}d Ahead" if delay_days < 0 else f"+{sv_pct:.1f}% Ahead"
+    else:
+        schedule_bucket = "ON_TRACK"
+        schedule_label = "On Schedule"
+
+    # To-Complete Performance Index (TCPI = (BAC - EV) / (BAC - AC))
+    rem_work = max(0.0, effective_bac - ev)
+    rem_budget = effective_bac - ac
+    if rem_work == 0:
+        tcpi = 1.0
+    elif rem_budget <= 0:
+        tcpi = 9.99
+    else:
+        tcpi = round(rem_work / rem_budget, 2)
+
+    # Blocked WBS & Next Milestone Detection
+    blocked_items = [w.get("item_name") for w in (wbs_items or []) if w.get("status") == "Blocked"]
+    incomplete_items = [w.get("item_name") for w in (wbs_items or []) if w.get("status") != "Completed" and int(w.get("is_completed") or 0) == 0]
+    next_milestone = incomplete_items[0] if incomplete_items else "All Deliverables Completed"
+
+    # Smart Time-Phased PV & SPI-Projected Forecast Date (for 1-Click Auto-Compute in Form 3)
+    b_start = project.get("baseline_start_date")
+    smart_pv_estimate = round(pv if pv > 0 else wbs_earned_value, 2)
+    smart_forecast_date = forecast_finish or revised_b_end
+    if b_start and revised_b_end:
+        try:
+            d_s = datetime.date.fromisoformat(b_start)
+            d_e = datetime.date.fromisoformat(revised_b_end)
+            total_days = max(1, (d_e - d_s).days)
+            ref_date_str = latest_snapshot.get("cut_off_date") if latest_snapshot else "2026-03-31"
+            d_ref = datetime.date.fromisoformat(ref_date_str)
+            elapsed_ratio = max(0.0, min(1.0, (d_ref - d_s).days / total_days))
+            if smart_pv_estimate == 0:
+                smart_pv_estimate = round(effective_bac * elapsed_ratio, 2)
+            if spi > 0 and spi != 1.0:
+                proj_total_days = int(round(total_days / spi))
+                smart_forecast_date = (d_s + datetime.timedelta(days=proj_total_days)).isoformat()
+        except Exception:
+            pass
+
     return {
-        # Core EVM values
-        "bac": bac,
+        # Core EVM & Commercial Baseline values
+        "original_bac": bac,
+        "approved_cr_cost": approved_cr_cost,
+        "approved_cr_days": approved_cr_days,
+        "revised_bac": revised_bac,
+        "bac": effective_bac,
         "contract_value": contract_val,
+        "planned_margin": planned_margin,
+        "planned_margin_pct": planned_margin_pct,
+        "forecast_margin": forecast_margin,
+        "forecast_margin_pct": forecast_margin_pct,
         "pv": pv,
         "ev": ev,
         "ac": ac,
@@ -269,13 +372,23 @@ def compute_project_kpis(
         "eac": eac,
         "etc": etc,
         "vac": vac,
+        "tcpi": tcpi,
         "contingency_reserve": contingency,
         # Progress & Milestones
         "overall_progress_pct": overall_progress_pct,
+        "wbs_progress_pct": wbs_progress_pct,
+        "wbs_earned_value": wbs_earned_value,
+        "smart_pv_estimate": smart_pv_estimate,
+        "smart_forecast_date": smart_forecast_date,
         "planned_progress_pct": planned_progress_pct,
         "progress_variance_pct": progress_var_pct,
         "milestone_achievement_pct": milestone_achieve_pct,
         "delay_days": delay_days,
+        "schedule_bucket": schedule_bucket,
+        "schedule_label": schedule_label,
+        "blocked_wbs_items": blocked_items,
+        "next_milestone": next_milestone,
+        "revised_baseline_end_date": revised_b_end,
         "forecast_completion_date": forecast_finish,
         # Quality & Delivery
         "deliverable_complete_pct": deliv_complete_pct,
@@ -299,6 +412,9 @@ def compute_project_kpis(
         "rag_status": overall_rag,
         "rag_cpi": rag_cpi,
         "rag_spi": rag_spi,
+        "rag_sv_pct": rag_sv_pct,
+        "rag_cv_pct": rag_cv_pct,
+        "rag_milestone": rag_milestone,
         "rag_delay": rag_delay,
         "rag_vac": rag_vac,
         "rag_rework": rag_rework,
@@ -308,7 +424,7 @@ def compute_project_kpis(
 
 def compute_group_portfolio_rollup(projects_with_kpis: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
-    Computes consolidated Group CEO Holding-level roll-ups across all 15 subsidiaries.
+    Computes consolidated Group CEO Holding-level roll-ups across all 18 subsidiaries.
     """
     if not projects_with_kpis:
         return {
@@ -322,6 +438,7 @@ def compute_group_portfolio_rollup(projects_with_kpis: List[Dict[str, Any]]) -> 
             "group_budget_consumed_pct": 0.0,
             "group_overrun_exposure": 0.0,
             "rag_counts": {"GREEN": 0, "AMBER": 0, "RED": 0},
+            "schedule_counts": {"ADVANCED": 0, "ON_TRACK": 0, "DELAYED": 0},
             "health_distribution": {"healthy": 0, "at_risk": 0, "critical": 0}
         }
 
@@ -344,9 +461,12 @@ def compute_group_portfolio_rollup(projects_with_kpis: List[Dict[str, Any]]) -> 
     group_overrun = round(sum(max(0.0, p["kpis"]["eac"] - p["kpis"]["bac"]) for p in projects_with_kpis), 2)
 
     rag_counts = {"GREEN": 0, "AMBER": 0, "RED": 0}
+    schedule_counts = {"ADVANCED": 0, "ON_TRACK": 0, "DELAYED": 0}
     for p in projects_with_kpis:
         status = p["kpis"]["rag_status"]
         rag_counts[status] = rag_counts.get(status, 0) + 1
+        sb = p["kpis"].get("schedule_bucket", "ON_TRACK")
+        schedule_counts[sb] = schedule_counts.get(sb, 0) + 1
 
     return {
         "total_projects": total_projects,
@@ -359,6 +479,7 @@ def compute_group_portfolio_rollup(projects_with_kpis: List[Dict[str, Any]]) -> 
         "group_budget_consumed_pct": group_consumed_pct,
         "group_overrun_exposure": group_overrun,
         "rag_counts": rag_counts,
+        "schedule_counts": schedule_counts,
         "health_distribution": {
             "healthy": rag_counts.get("GREEN", 0),
             "at_risk": rag_counts.get("AMBER", 0),
