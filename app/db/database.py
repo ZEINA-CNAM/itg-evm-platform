@@ -168,6 +168,7 @@ def init_db(force_reseed_zero_data: bool = False):
         cr_code TEXT NOT NULL,
         description TEXT NOT NULL,
         cost_impact REAL DEFAULT 0,
+        revenue_impact REAL DEFAULT 0,
         schedule_impact_days INTEGER DEFAULT 0,
         status TEXT DEFAULT 'Pending', -- 'Pending', 'Approved', 'Rejected'
         requested_by TEXT NOT NULL,
@@ -177,6 +178,12 @@ def init_db(force_reseed_zero_data: bool = False):
         FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
     );
     """)
+
+    # Migration: ensure revenue_impact exists if table was created previously
+    cursor.execute("PRAGMA table_info(project_change_requests);")
+    cr_cols = [c[1] for c in cursor.fetchall()]
+    if "revenue_impact" not in cr_cols:
+        cursor.execute("ALTER TABLE project_change_requests ADD COLUMN revenue_impact REAL DEFAULT 0;")
 
     # Composite indexes for sub-second querying
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_projects_sub ON projects(subsidiary_id);")

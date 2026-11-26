@@ -315,11 +315,14 @@ def seed_itg_sample_portfolio():
             )
 
         for cr in p.get("change_requests", []):
+            # Tuple format: (cr_code, description, cost_impact, schedule_impact_days, status, requested_by, approved_by, approval_date)
+            # revenue_impact defaults to 0.0 unless explicitly provided as 9th element
+            rev_impact = cr[8] if len(cr) > 8 else 0.0
             cursor.execute(
                 """INSERT INTO project_change_requests (
-                    project_id, cr_code, description, cost_impact, schedule_impact_days, status, requested_by, approved_by, approval_date
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (proj_id, cr[0], cr[1], cr[2], cr[3], cr[4], cr[5], cr[6], cr[7])
+                    project_id, cr_code, description, cost_impact, revenue_impact, schedule_impact_days, status, requested_by, approved_by, approval_date
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (proj_id, cr[0], cr[1], cr[2], rev_impact, cr[3], cr[4], cr[5], cr[6], cr[7])
             )
 
     conn.commit()

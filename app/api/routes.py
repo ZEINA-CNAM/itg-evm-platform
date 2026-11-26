@@ -90,12 +90,21 @@ def get_projects(
         risks = conn.execute("SELECT * FROM project_risks WHERE project_id = ?", (pid,)).fetchall()
         crs = conn.execute("SELECT * FROM project_change_requests WHERE project_id = ?", (pid,)).fetchall()
 
+        # Fetch prior snapshot for Forecast Accuracy KPI #15 (compare EAC(t-1) vs current)
+        prior_snap = None
+        if snap:
+            prior_snap = conn.execute(
+                "SELECT * FROM periodic_status_snapshots WHERE project_id = ? AND cut_off_date < ? ORDER BY cut_off_date DESC LIMIT 1",
+                (pid, dict(snap)["cut_off_date"])
+            ).fetchone()
+
         kpis = compute_project_kpis(
             p_dict,
             latest_snapshot=dict(snap) if snap else None,
             wbs_items=[dict(w) for w in wbs],
             risks=[dict(r) for r in risks],
-            change_requests=[dict(c) for c in crs]
+            change_requests=[dict(c) for c in crs],
+            prior_snapshot=dict(prior_snap) if prior_snap else None
         )
 
         p_dict["kpis"] = kpis
@@ -213,13 +222,15 @@ def get_project_detail(project_id: int):
     crs = conn.execute("SELECT * FROM project_change_requests WHERE project_id = ? ORDER BY id DESC", (project_id,)).fetchall()
 
     latest_snap = dict(snapshots[-1]) if snapshots else None
+    prior_snap = dict(snapshots[-2]) if len(snapshots) >= 2 else None
 
     kpis = compute_project_kpis(
         p_dict,
         latest_snapshot=latest_snap,
         wbs_items=[dict(w) for w in wbs],
         risks=[dict(r) for r in risks],
-        change_requests=[dict(c) for c in crs]
+        change_requests=[dict(c) for c in crs],
+        prior_snapshot=prior_snap
     )
 
     p_dict["kpis"] = kpis
@@ -371,9 +382,9 @@ def add_change_request(payload: ChangeRequestCreate):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
-        """INSERT INTO project_change_requests (project_id, cr_code, description, cost_impact, schedule_impact_days, status, requested_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (payload.project_id, payload.cr_code, payload.description, payload.cost_impact, payload.schedule_impact_days, payload.status, payload.requested_by)
+        """INSERT INTO project_change_requests (project_id, cr_code, description, cost_impact, revenue_impact, schedule_impact_days, status, requested_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (payload.project_id, payload.cr_code, payload.description, payload.cost_impact, payload.revenue_impact, payload.schedule_impact_days, payload.status, payload.requested_by)
     )
     conn.commit()
     conn.close()

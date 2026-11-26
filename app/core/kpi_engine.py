@@ -6,7 +6,8 @@ def compute_project_kpis(
     latest_snapshot: Optional[Dict[str, Any]] = None,
     wbs_items: Optional[List[Dict[str, Any]]] = None,
     risks: Optional[List[Dict[str, Any]]] = None,
-    change_requests: Optional[List[Dict[str, Any]]] = None
+    change_requests: Optional[List[Dict[str, Any]]] = None,
+    prior_snapshot: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     Computes all 25 KPIs deterministically from dashboard KPI.jpeg and the EVM ANSI/EIA-748 standard.
@@ -15,14 +16,17 @@ def compute_project_kpis(
     bac = float(project.get("bac") or 0.0)
     contract_val = float(project.get("contract_value") or bac)
     contingency = float(project.get("contingency_reserve") or 0.0)
-    planned_effort = float(project.get("planned_effort_hours") or 1.0)
-    planned_fte = float(project.get("planned_fte") or 1.0)
+    pe_raw = project.get("planned_effort_hours")
+    planned_effort = float(pe_raw) if pe_raw is not None else 0.0
+    planned_fte = float(project.get("planned_fte") if project.get("planned_fte") is not None else 1.0)
 
     # Approved Change Requests (Form 4 Governance -> Baseline Expansion)
     approved_cr_cost = round(sum(float(c.get("cost_impact") or 0.0) for c in (change_requests or []) if c.get("status") == "Approved"), 2)
+    approved_cr_revenue = round(sum(float(c.get("revenue_impact") or 0.0) for c in (change_requests or []) if c.get("status") == "Approved"), 2)
     approved_cr_days = sum(int(c.get("schedule_impact_days") or 0) for c in (change_requests or []) if c.get("status") == "Approved")
     revised_bac = round(bac + approved_cr_cost, 2)
     effective_bac = revised_bac if revised_bac > 0 else bac
+    revised_contract_val = round(contract_val + approved_cr_revenue, 2)
 
     # Revised Baseline End Date (Original Baseline End + Approved CR Schedule Days)
     b_end = project.get("baseline_end_date")
@@ -35,8 +39,11 @@ def compute_project_kpis(
 
     # Bottom-Up WBS Weighted Progress % (Kanban Stage Credit: Completed=100%, In Review=80%, In Progress=50%, Blocked=25%)
     wbs_progress_pct = 0.0
+    total_w = 0.0
+    wbs_weight_warning = False
     if wbs_items and len(wbs_items) > 0:
         total_w = sum(float(i.get("weight_pct") or 0.0) for i in wbs_items)
+        wbs_weight_warning = abs(total_w - 100.0) > 0.01
         if total_w > 0:
             stage_weights = {"Completed": 1.0, "In Review": 0.8, "In Progress": 0.5, "Blocked": 0.25, "Backlog": 0.0}
             earned_w = 0.0
@@ -48,7 +55,22 @@ def compute_project_kpis(
                     earned_w += w * stage_weights.get(i.get("status") or "Backlog", 0.0)
             wbs_progress_pct = round((earned_w / total_w) * 100.0, 1)
 
-    wbs_earned_value = round((wbs_progress_pct / 100.0) * effective_bac, 2)
+    # Deliverable-level EV: EV = sum(Budget_i * CompletionFactor_i)
+    # Where Budget_i = BAC * (Weight_i / 100)
+    wbs_earned_value = 0.0
+    if wbs_items and len(wbs_items) > 0 and total_w > 0:
+        stage_weights = {"Completed": 1.0, "In Review": 0.8, "In Progress": 0.5, "Blocked": 0.25, "Backlog": 0.0}
+        for i in wbs_items:
+            w_pct = float(i.get("weight_pct") or 0.0)
+            budget_i = effective_bac * (w_pct / 100.0) if total_w > 0 else 0.0
+            if int(i.get("is_completed") or 0) == 1 or i.get("status") == "Completed":
+                factor = 1.0
+            else:
+                factor = stage_weights.get(i.get("status") or "Backlog", 0.0)
+            wbs_earned_value += budget_i * factor
+        wbs_earned_value = round(wbs_earned_value, 2)
+    else:
+        wbs_earned_value = round((wbs_progress_pct / 100.0) * effective_bac, 2)
 
     # Defaults from snapshot (or automatic bottom-up WBS rollup when no snapshot is filed yet)
     if latest_snapshot:
@@ -58,7 +80,8 @@ def compute_project_kpis(
         forecast_finish = latest_snapshot.get("forecast_completion_date") or revised_b_end
         actual_effort = float(latest_snapshot.get("actual_effort_hours") or 0.0)
         rework_effort = float(latest_snapshot.get("rework_effort_hours") or 0.0)
-        avail_hours = float(latest_snapshot.get("available_hours") or (planned_fte * 160.0))
+        ah_raw = latest_snapshot.get("available_hours")
+        avail_hours = float(ah_raw) if ah_raw is not None else (planned_fte * 160.0)
         deliv_sub = int(latest_snapshot.get("deliverables_submitted") or 0)
         deliv_acc = int(latest_snapshot.get("deliverables_accepted") or 0)
         defects = int(latest_snapshot.get("defects_count") or 0)
@@ -78,8 +101,10 @@ def compute_project_kpis(
 
     # 1. Overall Progress %
     # Formula: (Completed Weighted Work / Total Weighted Work) * 100
+    progress_unverified_warning = False
     if wbs_items and len(wbs_items) > 0:
-        calc_progress = max(wbs_progress_pct, reported_progress) if latest_snapshot else wbs_progress_pct
+        calc_progress = wbs_progress_pct  # Authoritative bottom-up only
+        progress_unverified_warning = abs(wbs_progress_pct - reported_progress) > 5.0 if latest_snapshot else False
     else:
         calc_progress = (ev / effective_bac * 100.0) if effective_bac > 0 else reported_progress
 
@@ -105,8 +130,13 @@ def compute_project_kpis(
     # 4. Schedule Variance %
     # Formula: ((EV - PV) / PV) * 100
     # RAG Rule: Within ±5% (>= -5%) -> GREEN | 5% to 10% adverse (-10% to -5%) -> AMBER | >10% adverse (< -10%) -> RED
-    sv_pct = round(((ev - pv) / pv * 100.0) if pv > 0 else 0.0, 1)
-    if sv_pct >= -5.0:
+    # SV% — N/A when PV = 0
+    if pv > 0:
+        sv_pct = round(((ev - pv) / pv * 100.0), 1)
+    else:
+        sv_pct = None  # N/A
+
+    if sv_pct is None or sv_pct >= -5.0:
         rag_sv_pct = "GREEN"
     elif sv_pct >= -10.0:
         rag_sv_pct = "AMBER"
@@ -115,8 +145,13 @@ def compute_project_kpis(
 
     # 5. SPI (Schedule Performance Index)
     # Formula: EV / PV
-    spi = round((ev / pv) if pv > 0 else 1.0, 2)
-    if spi >= 0.95:
+    # SPI — N/A when PV = 0
+    if pv > 0:
+        spi = round(ev / pv, 2)
+    else:
+        spi = None  # N/A
+
+    if spi is None or spi >= 0.95:
         rag_spi = "GREEN"
     elif spi >= 0.90:
         rag_spi = "AMBER"
@@ -131,11 +166,11 @@ def compute_project_kpis(
             achieved_milestones = sum(1 for m in milestones if int(m.get("is_completed") or 0) == 1)
             milestone_achieve_pct = round((achieved_milestones / due_milestones) * 100.0, 1)
         else:
-            milestone_achieve_pct = 100.0
+            milestone_achieve_pct = None  # N/A: no milestones defined
     else:
-        milestone_achieve_pct = 100.0
+        milestone_achieve_pct = None  # N/A
 
-    if milestone_achieve_pct >= 95.0:
+    if milestone_achieve_pct is None or milestone_achieve_pct >= 95.0:
         rag_milestone = "GREEN"
     elif milestone_achieve_pct >= 85.0:
         rag_milestone = "AMBER"
@@ -167,8 +202,13 @@ def compute_project_kpis(
     # 9. Cost Variance %
     # Formula: ((EV - AC) / EV) * 100
     # RAG Rule: Within ±5% (>= -5%) -> GREEN | 5% to 10% adverse (-10% to -5%) -> AMBER | >10% adverse (< -10%) -> RED
-    cv_pct = round(((ev - ac) / ev * 100.0) if ev > 0 else 0.0, 1)
-    if cv_pct >= -5.0:
+    # CV% — N/A when EV = 0
+    if ev > 0:
+        cv_pct = round(((ev - ac) / ev * 100.0), 1)
+    else:
+        cv_pct = None  # N/A
+
+    if cv_pct is None or cv_pct >= -5.0:
         rag_cv_pct = "GREEN"
     elif cv_pct >= -10.0:
         rag_cv_pct = "AMBER"
@@ -177,8 +217,13 @@ def compute_project_kpis(
 
     # 10. CPI (Cost Performance Index)
     # Formula: EV / AC
-    cpi = round((ev / ac) if ac > 0 else 1.0, 2)
-    if cpi >= 0.95:
+    # CPI — N/A when AC = 0
+    if ac > 0:
+        cpi = round(ev / ac, 2)
+    else:
+        cpi = None  # N/A
+
+    if cpi is None or cpi >= 0.95:
         rag_cpi = "GREEN"
     elif cpi >= 0.90:
         rag_cpi = "AMBER"
@@ -198,7 +243,11 @@ def compute_project_kpis(
 
     # 12. Estimate at Completion (EAC)
     # Formula: Revised BAC / CPI
-    eac = round((effective_bac / cpi) if cpi > 0 else effective_bac, 2)
+    # EAC: CPI-based forecast (when CPI is available and > 0)
+    if cpi is not None and cpi > 0:
+        eac = round(effective_bac / cpi, 2)
+    else:
+        eac = effective_bac  # Fallback: assume on-budget
 
     # 13. Estimate to Complete (ETC)
     # Formula: EAC - AC
@@ -215,13 +264,38 @@ def compute_project_kpis(
         rag_vac = "RED"   # Overrun exceeds reserve!
 
     # Commercial Gross Margin Analysis (CFO Cockpit)
-    planned_margin = round(contract_val - effective_bac, 2)
-    planned_margin_pct = round((planned_margin / contract_val * 100.0) if contract_val > 0 else 0.0, 1)
-    forecast_margin = round(contract_val - eac, 2)
-    forecast_margin_pct = round((forecast_margin / contract_val * 100.0) if contract_val > 0 else 0.0, 1)
+    if revised_contract_val > 0:
+        planned_margin = round(revised_contract_val - effective_bac, 2)
+        planned_margin_pct = round((planned_margin / revised_contract_val * 100.0), 1)
+        forecast_margin = round(revised_contract_val - eac, 2)
+        forecast_margin_pct = round((forecast_margin / revised_contract_val * 100.0), 1)
+    else:
+        planned_margin = None
+        planned_margin_pct = None
+        forecast_margin = None
+        forecast_margin_pct = None
 
     # 15. Forecast Accuracy %
-    eac_accuracy_pct = round(max(0.0, (1.0 - (abs(eac - (ac + etc)) / eac if eac > 0 else 0.0))) * 100.0, 1)
+    # Compare prior period EAC against current actual cost progress
+    # If no prior snapshot, compare against baseline BAC
+    if prior_snapshot:
+        prior_eac = float(prior_snapshot.get("eac_snapshot") or 0.0)
+        if prior_eac <= 0:
+            # Fallback: reconstruct from prior snapshot BAC/CPI if available
+            prior_eac = effective_bac  # Use baseline as fallback
+        # Compare prior forecast against where we actually are now
+        if ac > 0 and prior_eac > 0 and eac > 0:
+            eac_accuracy_pct = round(max(0.0, (1.0 - abs(prior_eac - eac) / eac)) * 100.0, 1)
+        elif eac > 0:
+            eac_accuracy_pct = round(max(0.0, (1.0 - abs(effective_bac - eac) / eac)) * 100.0, 1)
+        else:
+            eac_accuracy_pct = None  # N/A
+    else:
+        # Month 1: compare against baseline BAC
+        if eac > 0:
+            eac_accuracy_pct = round(max(0.0, (1.0 - abs(effective_bac - eac) / eac)) * 100.0, 1)
+        else:
+            eac_accuracy_pct = None  # N/A
 
     # 16. Deliverable Complete %
     if wbs_items:
@@ -280,8 +354,12 @@ def compute_project_kpis(
 
     # 24. Resource Utilization %
     # Formula: (Productive Effort / Available Hours) * 100
-    resource_utilization_pct = round((actual_effort / avail_hours * 100.0) if avail_hours > 0 else 82.0, 1)
-    if 75.0 <= resource_utilization_pct <= 88.0:
+    if avail_hours > 0:
+        resource_utilization_pct = round((actual_effort / avail_hours * 100.0), 1)
+    else:
+        resource_utilization_pct = None  # N/A
+
+    if resource_utilization_pct is None or (75.0 <= resource_utilization_pct <= 88.0):
         rag_utilization = "GREEN"
     elif resource_utilization_pct < 75.0 or (88.0 < resource_utilization_pct <= 95.0):
         rag_utilization = "AMBER"
@@ -290,25 +368,33 @@ def compute_project_kpis(
 
     # 25. Effort Variance %
     # Formula: ((Actual Effort - Planned Effort) / Planned Effort) * 100
-    effort_variance_pct = round(((actual_effort - planned_effort) / planned_effort * 100.0) if planned_effort > 0 else 0.0, 1)
+    if planned_effort > 0:
+        effort_variance_pct = round(((actual_effort - planned_effort) / planned_effort * 100.0), 1)
+    else:
+        effort_variance_pct = None  # N/A
 
-    # Overall Combined RAG Status
-    # Standard Rule: If either CPI < 0.90, SPI < 0.90, Delay > 30d -> RED
-    # If CPI < 0.95 or SPI < 0.95 or Delay > 0d -> AMBER, else GREEN
-    if rag_cpi == "RED" or rag_spi == "RED" or rag_delay == "RED" or rag_vac == "RED":
+    # Composite RAG: Strict hierarchy — RED first, then AMBER, then GREEN
+    # RED: CPI < 0.90, SPI < 0.90, Delay > 30 days, or VAC exceeds contingency
+    _cpi = cpi if cpi is not None else 1.0
+    _spi = spi if spi is not None else 1.0
+    if _cpi < 0.90 or _spi < 0.90 or delay_days > 30 or rag_vac == "RED":
         overall_rag = "RED"
-    elif rag_cpi == "AMBER" or rag_spi == "AMBER" or rag_delay == "AMBER" or rag_vac == "AMBER":
+    elif _cpi < 0.95 or _spi < 0.95 or delay_days > 0 or rag_vac == "AMBER":
         overall_rag = "AMBER"
     else:
         overall_rag = "GREEN"
 
-    # Smart PMO Hub: 3-Bucket Schedule Velocity Classification (Delayed vs. On-Track vs. Advanced)
-    if delay_days > 0 or spi < 0.95 or sv_pct < -5.0:
+    # CEO 3-Bucket Schedule Velocity: strict hierarchy
+    # 1. DELAYED: Delay > 0 OR SPI < 0.95
+    # 2. ADVANCED: Not Delayed AND (Delay < 0 OR SPI > 1.02)
+    # 3. ON_TRACK: everything else
+    _spi_vel = spi if spi is not None else 1.0
+    if delay_days > 0 or _spi_vel < 0.95:
         schedule_bucket = "DELAYED"
-        schedule_label = f"{delay_days}d Delayed" if delay_days > 0 else f"SPI {spi:.2f} (Lag)"
-    elif delay_days < 0 or spi >= 1.03 or sv_pct >= 3.0:
+        schedule_label = f"{delay_days}d Delayed" if delay_days > 0 else f"SPI {_spi_vel:.2f} (Lag)"
+    elif delay_days < 0 or _spi_vel > 1.02:
         schedule_bucket = "ADVANCED"
-        schedule_label = f"{abs(delay_days)}d Ahead" if delay_days < 0 else f"+{sv_pct:.1f}% Ahead"
+        schedule_label = f"{abs(delay_days)}d Ahead" if delay_days < 0 else f"SPI {_spi_vel:.2f} (Ahead)"
     else:
         schedule_bucket = "ON_TRACK"
         schedule_label = "On Schedule"
@@ -319,7 +405,7 @@ def compute_project_kpis(
     if rem_work == 0:
         tcpi = 1.0
     elif rem_budget <= 0:
-        tcpi = 9.99
+        tcpi = None  # N/A: budget exhausted, denominator non-positive
     else:
         tcpi = round(rem_work / rem_budget, 2)
 
@@ -328,7 +414,7 @@ def compute_project_kpis(
     incomplete_items = [w.get("item_name") for w in (wbs_items or []) if w.get("status") != "Completed" and int(w.get("is_completed") or 0) == 0]
     next_milestone = incomplete_items[0] if incomplete_items else "All Deliverables Completed"
 
-    # Smart Time-Phased PV & SPI-Projected Forecast Date (for 1-Click Auto-Compute in Form 3)
+    # Smart Time-Phased PV (Estimated Linear PV) & SPI-Projected Forecast Date
     b_start = project.get("baseline_start_date")
     smart_pv_estimate = round(pv if pv > 0 else wbs_earned_value, 2)
     smart_forecast_date = forecast_finish or revised_b_end
@@ -337,14 +423,18 @@ def compute_project_kpis(
             d_s = datetime.date.fromisoformat(b_start)
             d_e = datetime.date.fromisoformat(revised_b_end)
             total_days = max(1, (d_e - d_s).days)
-            ref_date_str = latest_snapshot.get("cut_off_date") if latest_snapshot else "2026-03-31"
+            ref_date_str = latest_snapshot.get("cut_off_date") if latest_snapshot else datetime.date.today().isoformat()
             d_ref = datetime.date.fromisoformat(ref_date_str)
+            # Clamp elapsed ratio between 0% and 100%
             elapsed_ratio = max(0.0, min(1.0, (d_ref - d_s).days / total_days))
             if smart_pv_estimate == 0:
                 smart_pv_estimate = round(effective_bac * elapsed_ratio, 2)
-            if spi > 0 and spi != 1.0:
-                proj_total_days = int(round(total_days / spi))
-                smart_forecast_date = (d_s + datetime.timedelta(days=proj_total_days)).isoformat()
+            # SPI-Projected Finish: StatusDate + RemainingBaselineDuration / SPI
+            _spi_fc = spi if spi is not None and spi > 0 else 1.0
+            if _spi_fc != 1.0:
+                remaining_baseline_days = max(0, (d_e - d_ref).days)
+                projected_remaining = int(round(remaining_baseline_days / _spi_fc))
+                smart_forecast_date = (d_ref + datetime.timedelta(days=projected_remaining)).isoformat()
         except Exception:
             pass
 
@@ -352,8 +442,10 @@ def compute_project_kpis(
         # Core EVM & Commercial Baseline values
         "original_bac": bac,
         "approved_cr_cost": approved_cr_cost,
+        "approved_cr_revenue": approved_cr_revenue,
         "approved_cr_days": approved_cr_days,
         "revised_bac": revised_bac,
+        "revised_contract_value": revised_contract_val,
         "bac": effective_bac,
         "contract_value": contract_val,
         "planned_margin": planned_margin,
@@ -390,6 +482,8 @@ def compute_project_kpis(
         "next_milestone": next_milestone,
         "revised_baseline_end_date": revised_b_end,
         "forecast_completion_date": forecast_finish,
+        "wbs_weight_warning": wbs_weight_warning if wbs_items else False,
+        "progress_unverified_warning": progress_unverified_warning if 'progress_unverified_warning' in dir() else False,
         # Quality & Delivery
         "deliverable_complete_pct": deliv_complete_pct,
         "first_time_accept_pct": first_time_accept_pct,
@@ -419,7 +513,10 @@ def compute_project_kpis(
         "rag_vac": rag_vac,
         "rag_rework": rag_rework,
         "rag_utilization": rag_utilization,
-        "rag_quality": rag_quality
+        "rag_quality": rag_quality,
+        "rag_progress": rag_progress,
+        "rag_risk": rag_risk,
+        "rag_budget_pace": rag_budget_pace
     }
 
 def compute_group_portfolio_rollup(projects_with_kpis: List[Dict[str, Any]]) -> Dict[str, Any]:

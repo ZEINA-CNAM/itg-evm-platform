@@ -63,6 +63,7 @@ class ChangeRequestCreate(BaseModel):
     cr_code: str
     description: str
     cost_impact: float = 0.0
+    revenue_impact: float = 0.0
     schedule_impact_days: int = 0
     requested_by: str
     status: str = "Pending"
